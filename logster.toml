@@ -1,6 +1,6 @@
 output_style = "verbose"    # compact | verbose
-#color_scheme = "monokai-github-meta"
-color_scheme = "dracula"
+color_scheme = "monokai-github-meta"
+#color_scheme = "dracula"
 no_color = false
 
 [fields]
