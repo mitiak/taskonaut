@@ -1,0 +1,42 @@
+[project]
+name = "taskrunner"
+version = "0.1.0"
+description = "Deterministic task-runner service with FastAPI and PostgreSQL"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.4",
+    "fastapi>=0.129.0",
+    "psycopg[binary]>=3.3.3",
+    "pydantic>=2,<3",
+    "sqlalchemy>=2,<3",
+    "uvicorn>=0.41.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.2",
+]
+
+[project.scripts]
+taskrunner = "taskrunner.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"taskrunner/api.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+strict = true
