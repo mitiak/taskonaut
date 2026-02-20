@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/taskrunner"
+DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5433/taskrunner"
 
 
 def get_database_url() -> str:
