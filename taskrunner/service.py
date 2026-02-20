@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -9,6 +10,8 @@ from sqlalchemy.orm import Session
 from taskrunner.models import Task, TaskStatus
 from taskrunner.schemas import TaskCreateRequest
 from taskrunner.tools import AddInput, EchoInput, add, echo
+
+logger = logging.getLogger(__name__)
 
 
 class TaskNotFoundError(Exception):
@@ -20,6 +23,10 @@ class TaskRunnerService:
         self.db = db
 
     def run_predefined_flow(self, request: TaskCreateRequest) -> Task:
+        logger.info(
+            "task_flow.started",
+            extra={"text": request.text, "a": request.a, "b": request.b},
+        )
         task = Task(
             status=TaskStatus.pending,
             current_step=0,
@@ -28,11 +35,13 @@ class TaskRunnerService:
         )
         self.db.add(task)
         self.db.flush()
+        logger.info("task_flow.created", extra={"task_id": str(task.id)})
 
         task.status = TaskStatus.running
         task.current_step = 1
 
         echo_output = echo(EchoInput(text=request.text)).model_dump()
+        logger.info("task_flow.step_succeeded", extra={"task_id": str(task.id), "step": "echo"})
         task.step_history = [
             self._step_record(
                 step="echo",
@@ -44,6 +53,7 @@ class TaskRunnerService:
 
         task.current_step = 2
         add_output = add(AddInput(a=request.a, b=request.b)).model_dump()
+        logger.info("task_flow.step_succeeded", extra={"task_id": str(task.id), "step": "add"})
         task.step_history = [
             *task.step_history,
             self._step_record(
@@ -62,12 +72,15 @@ class TaskRunnerService:
         }
         self.db.commit()
         self.db.refresh(task)
+        logger.info("task_flow.completed", extra={"task_id": str(task.id), "status": task.status.value})
         return task
 
     def get_task(self, task_id: UUID) -> Task:
         task = self.db.get(Task, task_id)
         if task is None:
+            logger.warning("task.not_found", extra={"task_id": str(task_id)})
             raise TaskNotFoundError(f"Task {task_id} not found")
+        logger.info("task.found", extra={"task_id": str(task_id), "status": task.status.value})
         return task
 
     @staticmethod
