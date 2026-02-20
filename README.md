@@ -6,9 +6,11 @@ Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2,
 
 - Deterministic state machine for a predefined flow: `echo` then `add`
 - Tool contracts with Pydantic input/output models
-- PostgreSQL `tasks` persistence with status and step history
+- PostgreSQL persistence across `tasks`, `task_steps`, and `tool_calls`
 - HTTP API:
-  - `POST /tasks` starts the flow
+  - `POST /tasks` creates a task in `PLANNED`
+  - `POST /tasks/{task_id}/advance` performs one transition
+  - `POST /tasks/{task_id}/run` advances until terminal state (guarded by `max_steps`)
   - `GET /tasks` lists all tasks
   - `GET /tasks/{task_id}` fetches task state
 - CLI:
@@ -90,6 +92,20 @@ curl -s -X POST http://127.0.0.1:8000/tasks \
   -d '{"text":"hello","a":2,"b":3}'
 ```
 
+Advance one step:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/tasks/<task_id>/advance
+```
+
+Run until terminal state:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/tasks/<task_id>/run \
+  -H 'Content-Type: application/json' \
+  -d '{"max_steps":12}'
+```
+
 Fetch task:
 
 ```bash
@@ -104,22 +120,22 @@ curl -s http://127.0.0.1:8000/tasks
 
 ## CLI Usage
 
-Run flow:
+Create + run flow (default mode):
 
 ```bash
 uv run taskonaut run-flow --text hello --a 2 --b 3
 ```
 
-Run flow with logster-formatted logs:
+Create + advance only once:
 
 ```bash
-uv run taskonaut --logster run-flow --text hello --a 2 --b 3
+uv run taskonaut run-flow --mode advance --text hello --a 2 --b 3
 ```
 
-Run flow with a custom logster config file:
+Create only (leave task in PLANNED):
 
 ```bash
-uv run taskonaut --logster --logster-config ./logster.toml run-flow --text hello --a 2 --b 3
+uv run taskonaut run-flow --mode create --text hello --a 2 --b 3
 ```
 
 Fetch task:
@@ -134,7 +150,19 @@ Fetch all tasks:
 uv run taskonaut get-tasks
 ```
 
-`run-flow`, `get-task`, and `get-tasks` call the HTTP API (same path as Swagger). Override target API URL if needed:
+Advance existing task:
+
+```bash
+uv run taskonaut advance-task <task_id>
+```
+
+Run existing task to terminal:
+
+```bash
+uv run taskonaut run-task <task_id> --max-steps 12
+```
+
+Override target API URL if needed:
 
 ```bash
 uv run taskonaut --api-base-url http://127.0.0.1:8011 get-tasks

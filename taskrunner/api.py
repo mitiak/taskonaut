@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from taskrunner.db import get_db
 from taskrunner.log_config import configure_logging
-from taskrunner.schemas import TaskCreateRequest, TaskResponse
-from taskrunner.service import TaskNotFoundError, TaskRunnerService
+from taskrunner.schemas import RunTaskRequest, TaskCreateRequest, TaskResponse
+from taskrunner.service import MaxStepsExceededError, TaskNotFoundError, TaskRunnerService
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -24,8 +24,48 @@ def create_task(request: TaskCreateRequest, db: Session = Depends(get_db)) -> Ta
         extra={"text": request.text, "a": request.a, "b": request.b},
     )
     service = TaskRunnerService(db)
-    task = service.run_predefined_flow(request)
+    task = service.create_task(request)
     logger.info("create_task.succeeded", extra={"task_id": str(task.id)})
+    return TaskResponse.model_validate(task)
+
+
+@app.post("/tasks/{task_id}/advance", response_model=TaskResponse)
+def advance_task(task_id: UUID, db: Session = Depends(get_db)) -> TaskResponse:
+    service = TaskRunnerService(db)
+    try:
+        task = service.advance_task(task_id)
+    except TaskNotFoundError as exc:
+        logger.warning("advance_task.not_found", extra={"task_id": str(task_id)})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    logger.info(
+        "advance_task.succeeded",
+        extra={"task_id": str(task_id), "status": task.status.value},
+    )
+    return TaskResponse.model_validate(task)
+
+
+@app.post("/tasks/{task_id}/run", response_model=TaskResponse)
+def run_task(
+    task_id: UUID,
+    request: RunTaskRequest,
+    db: Session = Depends(get_db),
+) -> TaskResponse:
+    service = TaskRunnerService(db)
+    try:
+        task = service.run_task(task_id, request.max_steps)
+    except TaskNotFoundError as exc:
+        logger.warning("run_task.not_found", extra={"task_id": str(task_id)})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except MaxStepsExceededError as exc:
+        logger.warning(
+            "run_task.max_steps_exceeded",
+            extra={"task_id": str(task_id), "max_steps": request.max_steps},
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    logger.info(
+        "run_task.succeeded",
+        extra={"task_id": str(task_id), "status": task.status.value},
+    )
     return TaskResponse.model_validate(task)
 
 
