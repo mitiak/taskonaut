@@ -1,0 +1,9 @@
+output_style = "verbose"    # compact | verbose
+color_scheme = "monokai-github-meta"
+no_color = false
+
+[fields]
+timestamp = "timestamp"
+level = "level"
+message_fields = ["message"]
+main_line_fields = ["timestamp", "level", "logger", "message"]

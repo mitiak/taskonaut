@@ -11,6 +11,8 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.18.4",
     "fastapi>=0.129.0",
+    "httpx>=0.28.0",
+    "logster>=0.1.5",
     "psycopg[binary]>=3.3.3",
     "pydantic>=2,<3",
     "sqlalchemy>=2,<3",
@@ -19,7 +21,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.0",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
     "ruff>=0.15.2",
@@ -48,3 +49,6 @@ select = ["E", "F", "I", "B", "UP"]
 python_version = "3.12"
 warn_unused_configs = true
 strict = true
+
+[tool.uv.sources]
+logster = { git = "https://github.com/mitiak/logster.git" }

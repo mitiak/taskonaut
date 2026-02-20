@@ -110,10 +110,46 @@ Run flow:
 uv run taskrunner run-flow --text hello --a 2 --b 3
 ```
 
+Run flow with logster-formatted logs:
+
+```bash
+uv run taskrunner --logster run-flow --text hello --a 2 --b 3
+```
+
+Run flow with a custom logster config file:
+
+```bash
+uv run taskrunner --logster --logster-config ./logster.toml run-flow --text hello --a 2 --b 3
+```
+
 Fetch task:
 
 ```bash
 uv run taskrunner get-task <task_id>
+```
+
+Fetch all tasks:
+
+```bash
+uv run taskrunner get-tasks
+```
+
+`run-flow`, `get-task`, and `get-tasks` call the HTTP API (same path as Swagger). Override target API URL if needed:
+
+```bash
+uv run taskrunner --api-base-url http://127.0.0.1:8011 get-tasks
+```
+
+Run API app via CLI:
+
+```bash
+uv run taskrunner run-app --host 127.0.0.1 --port 8000 --reload
+```
+
+Run API app via CLI with logster-formatted logs:
+
+```bash
+uv run taskrunner --logster run-app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ## Quality Checks

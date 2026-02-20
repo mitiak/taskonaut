@@ -3,46 +3,142 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from collections.abc import Callable
 from uuid import UUID
 
-from taskrunner.db import SessionLocal
+import httpx
+import uvicorn
+
 from taskrunner.log_config import configure_logging
-from taskrunner.schemas import TaskCreateRequest, TaskResponse
-from taskrunner.service import TaskNotFoundError, TaskRunnerService
 
 logger = logging.getLogger(__name__)
 
 
+def _format_api_error(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text or response.reason_phrase
+    if isinstance(payload, dict) and isinstance(payload.get("detail"), str):
+        return payload["detail"]
+    return json.dumps(payload, indent=2)
+
+
+def _print_json_response(response: httpx.Response) -> None:
+    try:
+        payload = response.json()
+    except ValueError:
+        print(response.text)
+        return
+    print(json.dumps(payload, indent=2))
+
+
+def _api_request(
+    args: argparse.Namespace,
+    method: str,
+    path: str,
+    *,
+    json_body: dict[str, object] | None = None,
+) -> httpx.Response | None:
+    url = f"{args.api_base_url.rstrip('/')}{path}"
+    try:
+        return httpx.request(method, url, json=json_body, timeout=10.0)
+    except httpx.RequestError as exc:
+        logger.error("cli.api.unreachable", extra={"url": url, "error": str(exc)})
+        print(f"Failed to reach API at {url}: {exc}")
+        return None
+
+
 def run_flow_command(args: argparse.Namespace) -> int:
-    logger.info("cli.run_flow.started", extra={"text": args.text, "a": args.a, "b": args.b})
-    with SessionLocal() as session:
-        service = TaskRunnerService(session)
-        task = service.run_predefined_flow(
-            TaskCreateRequest(text=args.text, a=args.a, b=args.b)
-        )
-        logger.info("cli.run_flow.succeeded", extra={"task_id": str(task.id)})
-        print(json.dumps(TaskResponse.model_validate(task).model_dump(mode="json"), indent=2))
+    logger.info(
+        "cli.run_flow.started",
+        extra={"text": args.text, "a": args.a, "b": args.b, "api_base_url": args.api_base_url},
+    )
+    response = _api_request(
+        args,
+        "POST",
+        "/tasks",
+        json_body={"text": args.text, "a": args.a, "b": args.b},
+    )
+    if response is None:
+        return 1
+    if response.is_error:
+        logger.warning("cli.run_flow.failed", extra={"status_code": response.status_code})
+        print(_format_api_error(response))
+        return 1
+    logger.info("cli.run_flow.succeeded", extra={"status_code": response.status_code})
+    _print_json_response(response)
     return 0
 
 
 def get_task_command(args: argparse.Namespace) -> int:
-    logger.info("cli.get_task.started", extra={"task_id": args.task_id})
-    with SessionLocal() as session:
-        service = TaskRunnerService(session)
-        try:
-            task = service.get_task(UUID(args.task_id))
-        except TaskNotFoundError as exc:
-            logger.warning("cli.get_task.not_found", extra={"task_id": args.task_id})
-            print(str(exc))
-            return 1
-        logger.info("cli.get_task.succeeded", extra={"task_id": str(task.id)})
-        print(json.dumps(TaskResponse.model_validate(task).model_dump(mode="json"), indent=2))
+    logger.info("cli.get_task.started", extra={"task_id": args.task_id, "api_base_url": args.api_base_url})
+    try:
+        UUID(args.task_id)
+    except ValueError:
+        print(f"Invalid task id: {args.task_id}")
+        return 1
+
+    response = _api_request(args, "GET", f"/tasks/{args.task_id}")
+    if response is None:
+        return 1
+    if response.status_code == 404:
+        logger.warning("cli.get_task.not_found", extra={"task_id": args.task_id})
+        print(_format_api_error(response))
+        return 1
+    if response.is_error:
+        logger.warning(
+            "cli.get_task.failed",
+            extra={"task_id": args.task_id, "status_code": response.status_code},
+        )
+        print(_format_api_error(response))
+        return 1
+    logger.info("cli.get_task.succeeded", extra={"task_id": args.task_id})
+    _print_json_response(response)
+    return 0
+
+
+def get_tasks_command(args: argparse.Namespace) -> int:
+    logger.info("cli.get_tasks.started", extra={"api_base_url": args.api_base_url})
+    response = _api_request(args, "GET", "/tasks")
+    if response is None:
+        return 1
+    if response.is_error:
+        logger.warning("cli.get_tasks.failed", extra={"status_code": response.status_code})
+        print(_format_api_error(response))
+        return 1
+    logger.info("cli.get_tasks.succeeded", extra={"status_code": response.status_code})
+    _print_json_response(response)
+    return 0
+
+
+def run_app_command(args: argparse.Namespace) -> int:
+    if args.reload:
+        uvicorn.run("taskrunner.api:app", host=args.host, port=args.port, reload=True)
+    else:
+        from taskrunner.api import app
+
+        uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taskrunner")
+    parser.add_argument(
+        "--api-base-url",
+        default=os.getenv("TASKRUNNER_API_URL", "http://127.0.0.1:8000"),
+        help="Base URL for taskrunner API commands",
+    )
+    parser.add_argument(
+        "--logster",
+        action="store_true",
+        help="Format taskrunner logs with logster (uses logster.toml by default)",
+    )
+    parser.add_argument(
+        "--logster-config",
+        help="Path to logster TOML config file",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_flow = subparsers.add_parser("run-flow", help="Run the predefined echo+add flow")
@@ -55,13 +151,25 @@ def build_parser() -> argparse.ArgumentParser:
     get_task.add_argument("task_id", help="Task UUID")
     get_task.set_defaults(func=get_task_command)
 
+    get_tasks = subparsers.add_parser("get-tasks", help="Fetch all tasks")
+    get_tasks.set_defaults(func=get_tasks_command)
+
+    run_app = subparsers.add_parser("run-app", help="Run the main FastAPI app")
+    run_app.add_argument("--host", default="127.0.0.1", help="Host interface to bind")
+    run_app.add_argument("--port", type=int, default=8000, help="Port to bind")
+    run_app.add_argument("--reload", action="store_true", help="Enable auto-reload")
+    run_app.set_defaults(func=run_app_command)
+
     return parser
 
 
 def main() -> int:
-    configure_logging()
     parser = build_parser()
     args = parser.parse_args()
+    configure_logging(
+        log_style="logster" if args.logster else "json",
+        logster_config_path=args.logster_config,
+    )
     command: Callable[[argparse.Namespace], int] = args.func
     return command(args)
 

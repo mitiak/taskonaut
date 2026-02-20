@@ -6,6 +6,9 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+from logster.config import load_config
+from logster.format import format_record
+
 _BASE_LOG_RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__.keys())
 
 
@@ -13,33 +16,87 @@ def _json_default(value: Any) -> str:
     return str(value)
 
 
+def _payload_from_record(record: logging.LogRecord) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
+        "level": record.levelname,
+        "logger": record.name,
+        "message": record.getMessage(),
+    }
+    if record.exc_info:
+        payload["exception"] = logging.Formatter().formatException(record.exc_info)
+
+    for key, value in record.__dict__.items():
+        if key in _BASE_LOG_RECORD_FIELDS or key.startswith("_"):
+            continue
+        payload[key] = value
+    return payload
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        payload: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        }
-        if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
-
-        for key, value in record.__dict__.items():
-            if key in _BASE_LOG_RECORD_FIELDS or key.startswith("_"):
-                continue
-            payload[key] = value
-
-        return json.dumps(payload, default=_json_default)
+        return json.dumps(_payload_from_record(record), default=_json_default)
 
 
-def configure_logging(level: str | None = None) -> None:
+class LogsterFormatter(logging.Formatter):
+    def __init__(self, config_path: str | None = None) -> None:
+        super().__init__()
+        self.config = load_config(config_path=config_path)
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = _payload_from_record(record)
+        return format_record(
+            payload,
+            use_color=not self.config.no_color,
+            output_style=self.config.output_style,
+            time_color=self.config.time_color,
+            level_color=self.config.level_color,
+            file_color=self.config.file_color,
+            origin_color=self.config.origin_color,
+            metadata_color=self.config.metadata_color,
+            message_color=self.config.message_color,
+            verbose_metadata_key_color=self.config.verbose_metadata_key_color,
+            verbose_metadata_value_color=self.config.verbose_metadata_value_color,
+            verbose_metadata_punctuation_color=self.config.verbose_metadata_punctuation_color,
+            fields=self.config.fields,
+        )
+
+
+def configure_logging(
+    level: str | None = None,
+    *,
+    log_style: str | None = None,
+    logster_config_path: str | None = None,
+) -> None:
     logger = logging.getLogger("taskrunner")
-    if any(getattr(handler, "_taskrunner_json_logging", False) for handler in logger.handlers):
+    style = (log_style or os.getenv("LOG_STYLE", "json")).lower()
+    existing_styles = [
+        getattr(handler, "_taskrunner_logging_style", None)
+        for handler in logger.handlers
+        if getattr(handler, "_taskrunner_logging_style", None) is not None
+    ]
+
+    # If logging is already configured and no explicit style was requested,
+    # keep the existing style instead of resetting to default json.
+    if log_style is None and existing_styles:
         return
 
+    if any(
+        getattr(handler, "_taskrunner_logging_style", None) == style for handler in logger.handlers
+    ):
+        return
+
+    for handler in list(logger.handlers):
+        if getattr(handler, "_taskrunner_logging_style", None) is not None:
+            logger.removeHandler(handler)
+
     handler = logging.StreamHandler()
-    handler.setFormatter(JsonFormatter())
-    handler._taskrunner_json_logging = True  # type: ignore[attr-defined]
+    if style == "logster":
+        handler.setFormatter(LogsterFormatter(config_path=logster_config_path))
+    else:
+        handler.setFormatter(JsonFormatter())
+        style = "json"
+    handler._taskrunner_logging_style = style  # type: ignore[attr-defined]
 
     logger.addHandler(handler)
     logger.setLevel(level or os.getenv("LOG_LEVEL", "INFO"))
