@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from taskrunner.models import Task, TaskStatus
@@ -82,6 +83,11 @@ class TaskRunnerService:
             raise TaskNotFoundError(f"Task {task_id} not found")
         logger.info("task.found", extra={"task_id": str(task_id), "status": task.status.value})
         return task
+
+    def list_tasks(self) -> list[Task]:
+        tasks = self.db.scalars(select(Task).order_by(Task.created_at.desc())).all()
+        logger.info("tasks.listed", extra={"count": len(tasks)})
+        return list(tasks)
 
     @staticmethod
     def _step_record(

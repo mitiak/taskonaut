@@ -9,6 +9,7 @@ Deterministic task-runner service in Python 3.12 using `uv`, FastAPI, Pydantic v
 - PostgreSQL `tasks` persistence with status and step history
 - HTTP API:
   - `POST /tasks` starts the flow
+  - `GET /tasks` lists all tasks
   - `GET /tasks/{task_id}` fetches task state
 - CLI:
   - `taskrunner run-flow`
@@ -93,6 +94,12 @@ Fetch task:
 
 ```bash
 curl -s http://127.0.0.1:8000/tasks/<task_id>
+```
+
+List tasks:
+
+```bash
+curl -s http://127.0.0.1:8000/tasks
 ```
 
 ## CLI Usage

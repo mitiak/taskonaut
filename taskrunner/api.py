@@ -29,6 +29,14 @@ def create_task(request: TaskCreateRequest, db: Session = Depends(get_db)) -> Ta
     return TaskResponse.model_validate(task)
 
 
+@app.get("/tasks", response_model=list[TaskResponse])
+def list_tasks(db: Session = Depends(get_db)) -> list[TaskResponse]:
+    service = TaskRunnerService(db)
+    tasks = service.list_tasks()
+    logger.info("list_tasks.succeeded", extra={"count": len(tasks)})
+    return [TaskResponse.model_validate(task) for task in tasks]
+
+
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task(task_id: UUID, db: Session = Depends(get_db)) -> TaskResponse:
     service = TaskRunnerService(db)
