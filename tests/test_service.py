@@ -1,16 +1,42 @@
-from taskrunner.service import TaskRunnerService
+from __future__ import annotations
+
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+
+from taskrunner.models import TaskStatus
+from taskrunner.service import MaxStepsExceededError, TaskRunnerService
 
 
-def test_step_record_is_deterministic_shape() -> None:
-    payload = TaskRunnerService._step_record(
-        step="echo",
-        status="succeeded",
-        tool_input={"text": "hello"},
-        tool_output={"text": "hello"},
-    )
+def test_run_task_raises_after_max_steps(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = TaskRunnerService(db=object())  # type: ignore[arg-type]
+    task_id = uuid4()
+    running = SimpleNamespace(status=TaskStatus.RUNNING)
 
-    assert payload["step"] == "echo"
-    assert payload["status"] == "succeeded"
-    assert payload["input"] == {"text": "hello"}
-    assert payload["output"] == {"text": "hello"}
-    assert isinstance(payload["timestamp"], str)
+    monkeypatch.setattr(service, "get_task", lambda task_id_arg: running)
+    monkeypatch.setattr(service, "advance_task", lambda task_id_arg: running)
+
+    with pytest.raises(MaxStepsExceededError):
+        service.run_task(task_id, max_steps=2)
+
+
+def test_run_task_returns_when_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = TaskRunnerService(db=object())  # type: ignore[arg-type]
+    task_id = uuid4()
+    running = SimpleNamespace(status=TaskStatus.RUNNING)
+    completed = SimpleNamespace(status=TaskStatus.COMPLETED)
+    state = {"count": 0}
+
+    def fake_get_task(task_id_arg):
+        return running
+
+    def fake_advance_task(task_id_arg):
+        state["count"] += 1
+        return completed if state["count"] == 1 else running
+
+    monkeypatch.setattr(service, "get_task", fake_get_task)
+    monkeypatch.setattr(service, "advance_task", fake_advance_task)
+
+    result = service.run_task(task_id, max_steps=2)
+    assert result.status == TaskStatus.COMPLETED
