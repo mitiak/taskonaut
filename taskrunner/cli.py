@@ -124,16 +124,16 @@ def run_app_command(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="taskrunner")
+    parser = argparse.ArgumentParser(prog="taskonaut")
     parser.add_argument(
         "--api-base-url",
-        default=os.getenv("TASKRUNNER_API_URL", "http://127.0.0.1:8000"),
-        help="Base URL for taskrunner API commands",
+        default=os.getenv("TASKONAUT_API_URL", os.getenv("TASKRUNNER_API_URL", "http://127.0.0.1:8000")),
+        help="Base URL for taskonaut API commands",
     )
     parser.add_argument(
         "--logster",
         action="store_true",
-        help="Format taskrunner logs with logster (uses logster.toml by default)",
+        help="Format taskonaut logs with logster (uses logster.toml by default)",
     )
     parser.add_argument(
         "--logster-config",

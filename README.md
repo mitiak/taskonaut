@@ -1,6 +1,6 @@
-# taskrunner
+# taskonaut
 
-Deterministic task-runner service in Python 3.12 using `uv`, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, and PostgreSQL.
+Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, and PostgreSQL.
 
 ## Features
 
@@ -12,8 +12,8 @@ Deterministic task-runner service in Python 3.12 using `uv`, FastAPI, Pydantic v
   - `GET /tasks` lists all tasks
   - `GET /tasks/{task_id}` fetches task state
 - CLI:
-  - `taskrunner run-flow`
-  - `taskrunner get-task`
+  - `taskonaut run-flow`
+  - `taskonaut get-task`
 
 ## Requirements
 
@@ -107,49 +107,49 @@ curl -s http://127.0.0.1:8000/tasks
 Run flow:
 
 ```bash
-uv run taskrunner run-flow --text hello --a 2 --b 3
+uv run taskonaut run-flow --text hello --a 2 --b 3
 ```
 
 Run flow with logster-formatted logs:
 
 ```bash
-uv run taskrunner --logster run-flow --text hello --a 2 --b 3
+uv run taskonaut --logster run-flow --text hello --a 2 --b 3
 ```
 
 Run flow with a custom logster config file:
 
 ```bash
-uv run taskrunner --logster --logster-config ./logster.toml run-flow --text hello --a 2 --b 3
+uv run taskonaut --logster --logster-config ./logster.toml run-flow --text hello --a 2 --b 3
 ```
 
 Fetch task:
 
 ```bash
-uv run taskrunner get-task <task_id>
+uv run taskonaut get-task <task_id>
 ```
 
 Fetch all tasks:
 
 ```bash
-uv run taskrunner get-tasks
+uv run taskonaut get-tasks
 ```
 
 `run-flow`, `get-task`, and `get-tasks` call the HTTP API (same path as Swagger). Override target API URL if needed:
 
 ```bash
-uv run taskrunner --api-base-url http://127.0.0.1:8011 get-tasks
+uv run taskonaut --api-base-url http://127.0.0.1:8011 get-tasks
 ```
 
 Run API app via CLI:
 
 ```bash
-uv run taskrunner run-app --host 127.0.0.1 --port 8000 --reload
+uv run taskonaut run-app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Run API app via CLI with logster-formatted logs:
 
 ```bash
-uv run taskrunner --logster run-app --host 127.0.0.1 --port 8000 --reload
+uv run taskonaut --logster run-app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ## Quality Checks

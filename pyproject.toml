@@ -27,7 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-taskrunner = "taskrunner.cli:main"
+taskonaut = "taskrunner.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["taskrunner*"]
