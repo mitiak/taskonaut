@@ -21,6 +21,9 @@ def _payload_from_record(record: logging.LogRecord) -> dict[str, Any]:
         "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
         "level": record.levelname,
         "logger": record.name,
+        "file": record.filename,
+        "function": record.funcName,
+        "line": record.lineno,
         "message": record.getMessage(),
     }
     if record.exc_info:

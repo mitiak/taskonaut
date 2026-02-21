@@ -54,3 +54,34 @@ def test_logster_formatter_uses_toml_config(tmp_path) -> None:
     assert "[INFO]" in formatted
     assert "event happened" in formatted
     assert "\u001b[" not in formatted
+
+
+def test_logster_formatter_can_render_file_and_origin_on_main_line(tmp_path) -> None:
+    config_path = tmp_path / "logster.toml"
+    config_path.write_text(
+        'output_style = "compact"\n'
+        "no_color = true\n"
+        '[fields]\n'
+        'file = "file"\n'
+        'function = "function"\n'
+        'line = "line"\n'
+        'message_fields = ["message"]\n'
+        'main_line_fields = ["timestamp", "level", "file", "origin", "message"]\n'
+    )
+    record = logging.makeLogRecord(
+        {
+            "name": "taskrunner.test",
+            "levelname": "INFO",
+            "levelno": logging.INFO,
+            "msg": "event happened",
+            "args": (),
+            "filename": "service.py",
+            "funcName": "advance_task",
+            "lineno": 69,
+        }
+    )
+
+    formatted = LogsterFormatter(config_path=str(config_path)).format(record)
+
+    assert "[service.py]" in formatted
+    assert "[advance_task:69]" in formatted

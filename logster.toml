@@ -6,5 +6,8 @@ no_color = false
 [fields]
 timestamp = "timestamp"
 level = "level"
+file = "file"
+function = "function"
+line = "line"
 message_fields = ["message"]
-main_line_fields = ["timestamp", "level", "logger", "message"]
+main_line_fields = ["timestamp", "level", "file", "origin", "message"]
