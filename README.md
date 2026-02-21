@@ -7,6 +7,9 @@ Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2,
 - Deterministic state machine for a predefined flow: `echo` then `add`
 - Tool contracts with Pydantic input/output models
 - PostgreSQL persistence across `tasks`, `task_steps`, and `tool_calls`
+- Tenacity-based tool retries with exponential backoff (max 3 attempts)
+- Idempotent tool execution keyed by `(task_id, step_id, tool_name)`
+- Per-task DB locking during `advance` to prevent concurrent workers from racing
 - HTTP API:
   - `POST /tasks` creates a task in `PLANNED`
   - `POST /tasks/{task_id}/advance` performs one transition
@@ -81,6 +84,15 @@ export DATABASE_URL='postgresql+psycopg://postgres:postgres@localhost:5544/taskr
 ```bash
 uv run uvicorn main:app --reload
 ```
+
+## Retry and Idempotency Behavior
+
+- Tool execution uses exponential backoff retries with up to 3 total attempts.
+- `tool_calls` stores retry metadata: `retry_count`, `last_error`, `started_at`, and `finished_at`.
+- Each tool call writes an idempotency key built as `<task_id>:<step_id>:<tool_name>`.
+- A unique DB constraint enforces one `tool_calls` record per idempotency key.
+- If a duplicate execution path is hit for the same step/tool, the existing `tool_calls` row is reused.
+- `advance` acquires a PostgreSQL advisory transaction lock per task so only one worker can advance a given task at a time.
 
 ## API Usage
 

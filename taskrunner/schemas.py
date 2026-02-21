@@ -29,8 +29,13 @@ class ToolCallResponse(StrictBaseModel):
     id: UUID
     task_id: UUID
     task_step_id: UUID
+    idempotency_key: str
     tool_name: str
     status: ToolCallStatus
+    retry_count: int
+    last_error: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
     request_payload: dict[str, Any]
     response_payload: dict[str, Any] | None
     error_message: str | None

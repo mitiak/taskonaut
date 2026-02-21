@@ -126,6 +126,9 @@ class TaskStep(Base):
 
 class ToolCall(Base):
     __tablename__ = "tool_calls"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_tool_calls_idempotency_key"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -142,11 +145,16 @@ class ToolCall(Base):
         ForeignKey("task_steps.id", ondelete="CASCADE"),
         nullable=False,
     )
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[ToolCallStatus] = mapped_column(
         Enum(ToolCallStatus, name="tool_call_status", native_enum=False),
         nullable=False,
     )
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     request_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     response_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

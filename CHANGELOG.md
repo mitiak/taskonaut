@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-02-21
+
+- Add tenacity-based retries with exponential backoff for tool execution.
+- Add tool-call idempotency keys based on `(task_id, step_id, tool_name)` and enforce uniqueness in Postgres.
+- Add per-task PostgreSQL advisory locking plus row-level locking to prevent concurrent `advance` races.
+- Extend `tool_calls` with `retry_count`, `last_error`, `started_at`, and `finished_at`.
+- Add Alembic migration for new `tool_calls` columns and idempotency constraints.
+- Update API schemas and tests for retry/idempotency metadata.
+- Document retry/idempotency/locking behavior in `README.md`.
+
 ## 0.2.0 - 2026-02-21
 
 - Add Docker Compose PostgreSQL service for local development.
