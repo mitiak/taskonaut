@@ -38,10 +38,10 @@ Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2,
 uv sync
 ```
 
-Start PostgreSQL in Docker:
+Start PostgreSQL and Jaeger in Docker:
 
 ```bash
-docker compose up -d db
+docker compose up -d db jaeger
 ```
 
 Set your database URL (optional, this is already the app default):
@@ -60,6 +60,18 @@ Stop the database when done:
 
 ```bash
 docker compose down
+```
+
+Jaeger UI:
+
+```text
+http://localhost:16686
+```
+
+Default OTLP ingest endpoint used by the app:
+
+```text
+http://localhost:4318/v1/traces
 ```
 
 ## If You Already Have Postgres Running
@@ -106,6 +118,23 @@ uv run uvicorn main:app --reload
 - Every step and tool call gets a `span_id`.
 - Tool call logs include `trace_id`, `span_id`, and `tool_call_id` for correlation.
 - `taskrunner show <task_id>` includes `trace_id` in output.
+- CLI prints a Jaeger trace URL for tasks when `trace_id` is present.
+
+## Jaeger Visualization
+
+1. Start Jaeger:
+
+```bash
+docker compose up -d jaeger
+```
+
+2. Run a task:
+
+```bash
+uv run taskrunner run --flow demo --input '{"text":"hi","a":2,"b":3}' --verbose
+```
+
+3. Open the printed `trace_url` (or browse `http://localhost:16686`) to inspect the trace timeline and spans.
 
 ## API Usage
 

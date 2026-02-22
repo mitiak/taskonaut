@@ -15,6 +15,7 @@ from taskrunner.log_config import configure_logging
 from taskrunner.metrics import dump_metrics_snapshot
 from taskrunner.schemas import TaskCreateRequest, TaskResponse
 from taskrunner.service import TaskNotFoundError, TaskRunnerService
+from taskrunner.tracing import configure_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,9 @@ def _print_json_response(response: httpx.Response) -> None:
     except ValueError:
         print(response.text)
         return
+    if isinstance(payload, dict) and isinstance(payload.get("trace_id"), str):
+        _print_task_payload(payload)
+        return
     print(json.dumps(payload, indent=2))
 
 
@@ -44,6 +48,8 @@ def _print_task_payload(task_payload: dict[str, object]) -> None:
     trace_id = task_payload.get("trace_id")
     if isinstance(trace_id, str):
         print(f"trace_id: {trace_id}")
+        jaeger_ui_url = os.getenv("JAEGER_UI_URL", "http://localhost:16686").rstrip("/")
+        print(f"trace_url: {jaeger_ui_url}/trace/{trace_id}")
     print(json.dumps(task_payload, indent=2))
 
 
@@ -461,6 +467,7 @@ def main() -> int:
         log_style="logster" if args.logster else "json",
         logster_config_path=args.logster_config,
     )
+    configure_tracing(service_name="taskrunner-cli")
     command: Callable[[argparse.Namespace], int] = args.func
     return command(args)
 

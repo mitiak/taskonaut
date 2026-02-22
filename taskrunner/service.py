@@ -25,8 +25,10 @@ from taskrunner.models import (
     ToolCallStatus,
 )
 from taskrunner.schemas import TaskCreateRequest
+from taskrunner.tracing import format_span_id, format_trace_id, get_tracer
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset({TaskStatus.COMPLETED, TaskStatus.FAILED})
 TOOL_MAX_ATTEMPTS = 3
@@ -52,180 +54,197 @@ class TaskRunnerService:
         self.db = db
 
     def create_task(self, request: TaskCreateRequest) -> Task:
-        try:
-            flow = get_flow_definition(request.flow_name)
-        except ValueError as exc:
-            raise InvalidFlowError(str(exc)) from exc
-        initial_graph_state = dict(build_initial_graph_state(request))
-        first_node = flow.first_node()
-        logger.info(
-            "task.create.started",
-            extra={"text": request.text, "a": request.a, "b": request.b, "flow_name": flow.name},
-        )
-        task = Task(
-            trace_id=str(uuid4()),
-            status=TaskStatus.PLANNED,
-            flow_name=flow.name,
-            current_step=0,
-            current_node=first_node,
-            next_node=first_node,
-            graph_state_summary=self._build_graph_state_summary(
+        with tracer.start_as_current_span("task.create") as span:
+            try:
+                flow = get_flow_definition(request.flow_name)
+            except ValueError as exc:
+                raise InvalidFlowError(str(exc)) from exc
+
+            initial_graph_state = dict(build_initial_graph_state(request))
+            first_node = flow.first_node()
+            trace_id = format_trace_id(span.get_span_context().trace_id) or str(uuid4())
+            logger.info(
+                "task.create.started",
+                extra={
+                    "text": request.text,
+                    "a": request.a,
+                    "b": request.b,
+                    "flow_name": flow.name,
+                    "trace_id": trace_id,
+                },
+            )
+            task = Task(
+                trace_id=trace_id,
+                status=TaskStatus.PLANNED,
                 flow_name=flow.name,
+                current_step=0,
                 current_node=first_node,
                 next_node=first_node,
-                graph_state=initial_graph_state,
-            ),
-            input_payload=request.model_dump(),
-            output_payload=None,
-        )
-        self.db.add(task)
-        self.db.flush()
-
-        steps = [
-            TaskStep(
-                task_id=task.id,
-                step_index=index,
-                step_name=node_name,
-                span_id=str(uuid4()),
-                status=TaskStepStatus.PLANNED,
-                input_payload=build_step_input_payload(request=request, node_name=node_name),
+                graph_state_summary=self._build_graph_state_summary(
+                    flow_name=flow.name,
+                    current_node=first_node,
+                    next_node=first_node,
+                    graph_state=initial_graph_state,
+                ),
+                input_payload=request.model_dump(),
+                output_payload=None,
             )
-            for index, node_name in enumerate(flow.node_sequence, start=1)
-        ]
-        self.db.add_all(steps)
-        self._upsert_graph_snapshot(
-            task_id=task.id,
-            step_index=0,
-            current_node=task.current_node,
-            next_node=task.next_node,
-            graph_state=initial_graph_state,
-        )
-        self.db.commit()
-        logger.info(
-            "task.create.succeeded",
-            extra={"task_id": str(task.id), "trace_id": task.trace_id},
-        )
-        return self.get_task(task.id)
+            self.db.add(task)
+            self.db.flush()
+
+            steps = [
+                TaskStep(
+                    task_id=task.id,
+                    step_index=index,
+                    step_name=node_name,
+                    span_id=str(uuid4()),
+                    status=TaskStepStatus.PLANNED,
+                    input_payload=build_step_input_payload(request=request, node_name=node_name),
+                )
+                for index, node_name in enumerate(flow.node_sequence, start=1)
+            ]
+            self.db.add_all(steps)
+            self._upsert_graph_snapshot(
+                task_id=task.id,
+                step_index=0,
+                current_node=task.current_node,
+                next_node=task.next_node,
+                graph_state=initial_graph_state,
+            )
+            self.db.commit()
+            logger.info(
+                "task.create.succeeded",
+                extra={"task_id": str(task.id), "trace_id": task.trace_id},
+            )
+            return self.get_task(task.id)
 
     def advance_task(self, task_id: UUID) -> Task:
         try:
             self._acquire_task_lock(task_id)
             task = self._get_task_for_update(task_id)
-            logger.info(
-                "task.advance.started",
-                extra={
-                    "task_id": str(task.id),
-                    "status": task.status.value,
-                    "trace_id": task.trace_id,
+            with tracer.start_as_current_span(
+                "task.advance",
+                attributes={
+                    "task.id": str(task.id),
+                    "task.trace_id": task.trace_id,
+                    "task.status": task.status.value,
                 },
-            )
-
-            if task.status in TERMINAL_TASK_STATUSES:
+            ):
                 logger.info(
-                    "task.advance.terminal",
+                    "task.advance.started",
                     extra={
                         "task_id": str(task.id),
                         "status": task.status.value,
                         "trace_id": task.trace_id,
                     },
                 )
-                self.db.commit()
-                return self.get_task(task.id)
 
-            if task.status == TaskStatus.PLANNED:
-                task.status = TaskStatus.RUNNING
-                task.current_node = task.next_node
-                task.graph_state_summary = self._build_graph_state_summary(
-                    flow_name=task.flow_name,
-                    current_node=task.current_node,
-                    next_node=task.next_node,
-                    graph_state=self._get_latest_graph_state(task.id),
-                )
-                logger.info(
-                    "task.advance.transition",
-                    extra={
-                        "task_id": str(task.id),
-                        "to": task.status.value,
-                        "trace_id": task.trace_id,
-                    },
-                )
-                self.db.commit()
-                return self.get_task(task.id)
+                if task.status in TERMINAL_TASK_STATUSES:
+                    logger.info(
+                        "task.advance.terminal",
+                        extra={
+                            "task_id": str(task.id),
+                            "status": task.status.value,
+                            "trace_id": task.trace_id,
+                        },
+                    )
+                    self.db.commit()
+                    return self.get_task(task.id)
 
-            if task.status == TaskStatus.RUNNING:
-                next_step = self._get_next_planned_step(task.id)
-                if next_step is None:
-                    task.status = TaskStatus.FAILED
-                    task.next_node = None
+                if task.status == TaskStatus.PLANNED:
+                    task.status = TaskStatus.RUNNING
+                    task.current_node = task.next_node
                     task.graph_state_summary = self._build_graph_state_summary(
                         flow_name=task.flow_name,
                         current_node=task.current_node,
                         next_node=task.next_node,
                         graph_state=self._get_latest_graph_state(task.id),
                     )
-                    logger.error(
-                        "task.advance.no_step",
-                        extra={"task_id": str(task.id), "trace_id": task.trace_id},
+                    logger.info(
+                        "task.advance.transition",
+                        extra={
+                            "task_id": str(task.id),
+                            "to": task.status.value,
+                            "trace_id": task.trace_id,
+                        },
                     )
                     self.db.commit()
                     return self.get_task(task.id)
 
-                self._execute_step(task, next_step)
-                logger.info(
-                    "task.advance.executed",
-                    extra={
-                        "task_id": str(task.id),
-                        "step": next_step.step_name,
-                        "trace_id": task.trace_id,
-                    },
-                )
-                self.db.commit()
-                return self.get_task(task.id)
+                if task.status == TaskStatus.RUNNING:
+                    next_step = self._get_next_planned_step(task.id)
+                    if next_step is None:
+                        task.status = TaskStatus.FAILED
+                        task.next_node = None
+                        task.graph_state_summary = self._build_graph_state_summary(
+                            flow_name=task.flow_name,
+                            current_node=task.current_node,
+                            next_node=task.next_node,
+                            graph_state=self._get_latest_graph_state(task.id),
+                        )
+                        logger.error(
+                            "task.advance.no_step",
+                            extra={"task_id": str(task.id), "trace_id": task.trace_id},
+                        )
+                        self.db.commit()
+                        return self.get_task(task.id)
 
-            if task.status == TaskStatus.WAITING_OBSERVATION:
-                if self._get_next_planned_step(task.id) is None:
-                    task.status = TaskStatus.COMPLETED
-                    task.next_node = None
-                    task.output_payload = self._build_output_payload(task.id)
-                else:
-                    task.status = TaskStatus.RUNNING
-                    task.current_node = task.next_node
+                    self._execute_step(task, next_step)
+                    logger.info(
+                        "task.advance.executed",
+                        extra={
+                            "task_id": str(task.id),
+                            "step": next_step.step_name,
+                            "trace_id": task.trace_id,
+                        },
+                    )
+                    self.db.commit()
+                    return self.get_task(task.id)
+
+                if task.status == TaskStatus.WAITING_OBSERVATION:
+                    if self._get_next_planned_step(task.id) is None:
+                        task.status = TaskStatus.COMPLETED
+                        task.next_node = None
+                        task.output_payload = self._build_output_payload(task.id)
+                    else:
+                        task.status = TaskStatus.RUNNING
+                        task.current_node = task.next_node
+                    task.graph_state_summary = self._build_graph_state_summary(
+                        flow_name=task.flow_name,
+                        current_node=task.current_node,
+                        next_node=task.next_node,
+                        graph_state=self._get_latest_graph_state(task.id),
+                    )
+                    logger.info(
+                        "task.advance.transition",
+                        extra={
+                            "task_id": str(task.id),
+                            "to": task.status.value,
+                            "trace_id": task.trace_id,
+                        },
+                    )
+                    self.db.commit()
+                    return self.get_task(task.id)
+
+                previous_status = task.status.value
+                task.status = TaskStatus.FAILED
+                task.next_node = None
                 task.graph_state_summary = self._build_graph_state_summary(
                     flow_name=task.flow_name,
                     current_node=task.current_node,
                     next_node=task.next_node,
                     graph_state=self._get_latest_graph_state(task.id),
                 )
-                logger.info(
-                    "task.advance.transition",
+                logger.error(
+                    "task.advance.invalid_state",
                     extra={
                         "task_id": str(task.id),
-                        "to": task.status.value,
+                        "status": previous_status,
                         "trace_id": task.trace_id,
                     },
                 )
                 self.db.commit()
                 return self.get_task(task.id)
-
-            previous_status = task.status.value
-            task.status = TaskStatus.FAILED
-            task.next_node = None
-            task.graph_state_summary = self._build_graph_state_summary(
-                flow_name=task.flow_name,
-                current_node=task.current_node,
-                next_node=task.next_node,
-                graph_state=self._get_latest_graph_state(task.id),
-            )
-            logger.error(
-                "task.advance.invalid_state",
-                extra={
-                    "task_id": str(task.id),
-                    "status": previous_status,
-                    "trace_id": task.trace_id,
-                },
-            )
-            self.db.commit()
-            return self.get_task(task.id)
         except Exception:
             self.db.rollback()
             raise
@@ -354,49 +373,109 @@ class TaskRunnerService:
         raise RuntimeError("unreachable: retry loop exited without returning")
 
     def _execute_step(self, task: Task, step: TaskStep) -> None:
-        step.status = TaskStepStatus.RUNNING
+        with tracer.start_as_current_span(
+            "task.step.execute",
+            attributes={
+                "task.id": str(task.id),
+                "task.trace_id": task.trace_id,
+                "step.id": str(step.id),
+                "step.name": step.step_name,
+                "step.index": step.step_index,
+            },
+        ) as step_span:
+            step.status = TaskStepStatus.RUNNING
+            step.span_id = format_span_id(step_span.get_span_context().span_id) or step.span_id
 
-        tool_name = step.step_name
-        request_payload = step.input_payload
-        flow = get_flow_definition(task.flow_name)
-        idempotency_key = self._build_tool_call_idempotency_key(task.id, step.id, tool_name)
-        existing_call = self.db.scalar(
-            select(ToolCall).where(ToolCall.idempotency_key == idempotency_key).limit(1)
-        )
-        if existing_call is not None:
-            existing_snapshot = self.db.scalar(
-                select(GraphStateSnapshot)
-                .where(
-                    GraphStateSnapshot.task_id == task.id,
-                    GraphStateSnapshot.step_index == step.step_index,
-                )
-                .limit(1)
+            tool_name = step.step_name
+            request_payload = step.input_payload
+            flow = get_flow_definition(task.flow_name)
+            idempotency_key = self._build_tool_call_idempotency_key(task.id, step.id, tool_name)
+            existing_call = self.db.scalar(
+                select(ToolCall).where(ToolCall.idempotency_key == idempotency_key).limit(1)
             )
-            if existing_call.status == ToolCallStatus.COMPLETED:
-                step.status = TaskStepStatus.COMPLETED
-                step.output_payload = existing_call.response_payload
-                step.error_message = None
-                task.current_step = step.step_index
-                task.status = TaskStatus.WAITING_OBSERVATION
-                task.current_node = step.step_name
-                task.next_node = flow.next_node(step.step_name)
-                summary_graph_state = (
-                    existing_snapshot.graph_state
-                    if existing_snapshot is not None
-                    else self._get_latest_graph_state(task.id)
+            if existing_call is not None:
+                existing_snapshot = self.db.scalar(
+                    select(GraphStateSnapshot)
+                    .where(
+                        GraphStateSnapshot.task_id == task.id,
+                        GraphStateSnapshot.step_index == step.step_index,
+                    )
+                    .limit(1)
                 )
-                task.graph_state_summary = self._build_graph_state_summary(
+                if existing_call.status == ToolCallStatus.COMPLETED:
+                    step.status = TaskStepStatus.COMPLETED
+                    step.output_payload = existing_call.response_payload
+                    step.error_message = None
+                    task.current_step = step.step_index
+                    task.status = TaskStatus.WAITING_OBSERVATION
+                    task.current_node = step.step_name
+                    task.next_node = flow.next_node(step.step_name)
+                    summary_graph_state = (
+                        existing_snapshot.graph_state
+                        if existing_snapshot is not None
+                        else self._get_latest_graph_state(task.id)
+                    )
+                    task.graph_state_summary = self._build_graph_state_summary(
+                        flow_name=task.flow_name,
+                        current_node=task.current_node,
+                        next_node=task.next_node,
+                        graph_state=summary_graph_state,
+                    )
+                else:
+                    existing_error = existing_call.last_error or existing_call.error_message
+                    if existing_error is None:
+                        existing_error = "Tool call failed"
+                    step.status = TaskStepStatus.FAILED
+                    step.error_message = existing_error
+                    task.status = TaskStatus.FAILED
+                    task.current_step = step.step_index
+                    task.current_node = step.step_name
+                    task.next_node = None
+                    task.graph_state_summary = self._build_graph_state_summary(
+                        flow_name=task.flow_name,
+                        current_node=task.current_node,
+                        next_node=task.next_node,
+                        graph_state=self._get_latest_graph_state(task.id),
+                    )
+                logger.info(
+                    "tool.execute.idempotent_reuse",
+                    extra={
+                        "task_id": str(task.id),
+                        "trace_id": task.trace_id,
+                        "step_id": str(step.id),
+                        "tool_name": tool_name,
+                        "idempotency_key": idempotency_key,
+                        "span_id": existing_call.span_id,
+                        "tool_call_id": str(existing_call.id),
+                    },
+                )
+                logger.info(
+                    "tool_call.reused",
+                    extra={
+                        "task_id": str(task.id),
+                        "trace_id": task.trace_id,
+                        "step_id": str(step.id),
+                        "span_id": existing_call.span_id,
+                        "tool_call_id": str(existing_call.id),
+                        "tool_name": tool_name,
+                        "status": existing_call.status.value,
+                    },
+                )
+                return
+
+            latest_graph_state = self._get_latest_graph_state(task_id=task.id)
+            result, updated_graph_state, last_error, retry_count, started_at, finished_at = (
+                self._run_tool_with_retry(
+                    task_id=task.id,
+                    step_id=step.id,
                     flow_name=task.flow_name,
-                    current_node=task.current_node,
-                    next_node=task.next_node,
-                    graph_state=summary_graph_state,
+                    node_name=tool_name,
+                    graph_state=latest_graph_state,
                 )
-            else:
-                existing_error = (
-                    existing_call.last_error or existing_call.error_message or "Tool call failed"
-                )
+            )
+            if result is None:
                 step.status = TaskStepStatus.FAILED
-                step.error_message = existing_error
+                step.error_message = last_error
                 task.status = TaskStatus.FAILED
                 task.current_step = step.step_index
                 task.current_node = step.step_name
@@ -405,139 +484,90 @@ class TaskRunnerService:
                     flow_name=task.flow_name,
                     current_node=task.current_node,
                     next_node=task.next_node,
-                    graph_state=self._get_latest_graph_state(task.id),
+                    graph_state=latest_graph_state,
                 )
-            logger.info(
-                "tool.execute.idempotent_reuse",
-                extra={
-                    "task_id": str(task.id),
-                    "trace_id": task.trace_id,
-                    "step_id": str(step.id),
-                    "tool_name": tool_name,
-                    "idempotency_key": idempotency_key,
-                    "span_id": existing_call.span_id,
-                    "tool_call_id": str(existing_call.id),
-                },
-            )
-            logger.info(
-                "tool_call.reused",
-                extra={
-                    "task_id": str(task.id),
-                    "trace_id": task.trace_id,
-                    "step_id": str(step.id),
-                    "span_id": existing_call.span_id,
-                    "tool_call_id": str(existing_call.id),
-                    "tool_name": tool_name,
-                    "status": existing_call.status.value,
-                },
-            )
-            return
+                failed_tool_call = ToolCall(
+                    id=uuid4(),
+                    task_id=task.id,
+                    task_step_id=step.id,
+                    span_id=step.span_id,
+                    idempotency_key=idempotency_key,
+                    tool_name=tool_name,
+                    status=ToolCallStatus.FAILED,
+                    retry_count=retry_count,
+                    last_error=last_error,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    request_payload=request_payload,
+                    response_payload=None,
+                    error_message=last_error,
+                )
+                self.db.add(failed_tool_call)
+                logger.error(
+                    "tool_call.failed",
+                    extra={
+                        "task_id": str(task.id),
+                        "trace_id": task.trace_id,
+                        "step_id": str(step.id),
+                        "span_id": failed_tool_call.span_id,
+                        "tool_call_id": str(failed_tool_call.id),
+                        "tool_name": tool_name,
+                        "error": last_error,
+                    },
+                )
+                return
 
-        latest_graph_state = self._get_latest_graph_state(task_id=task.id)
-        result, updated_graph_state, last_error, retry_count, started_at, finished_at = (
-            self._run_tool_with_retry(
-                task_id=task.id,
-                step_id=step.id,
-                flow_name=task.flow_name,
-                node_name=tool_name,
-                graph_state=latest_graph_state,
-            )
-        )
-        if result is None:
-            step.status = TaskStepStatus.FAILED
-            step.error_message = last_error
-            task.status = TaskStatus.FAILED
+            step.status = TaskStepStatus.COMPLETED
+            step.output_payload = result
+            step.error_message = None
             task.current_step = step.step_index
             task.current_node = step.step_name
-            task.next_node = None
+            task.next_node = flow.next_node(step.step_name)
+            task.status = TaskStatus.WAITING_OBSERVATION
+            if updated_graph_state is None:
+                updated_graph_state = latest_graph_state
+            self._upsert_graph_snapshot(
+                task_id=task.id,
+                step_index=step.step_index,
+                current_node=task.current_node,
+                next_node=task.next_node,
+                graph_state=updated_graph_state,
+            )
             task.graph_state_summary = self._build_graph_state_summary(
                 flow_name=task.flow_name,
                 current_node=task.current_node,
                 next_node=task.next_node,
-                graph_state=latest_graph_state,
+                graph_state=updated_graph_state,
             )
-            failed_tool_call = ToolCall(
+            completed_tool_call = ToolCall(
                 id=uuid4(),
                 task_id=task.id,
                 task_step_id=step.id,
                 span_id=step.span_id,
                 idempotency_key=idempotency_key,
                 tool_name=tool_name,
-                status=ToolCallStatus.FAILED,
+                status=ToolCallStatus.COMPLETED,
                 retry_count=retry_count,
-                last_error=last_error,
+                last_error=None,
                 started_at=started_at,
                 finished_at=finished_at,
                 request_payload=request_payload,
-                response_payload=None,
-                error_message=last_error,
+                response_payload=result,
+                error_message=None,
             )
-            self.db.add(failed_tool_call)
-            logger.error(
-                "tool_call.failed",
+            self.db.add(completed_tool_call)
+            logger.info(
+                "tool_call.completed",
                 extra={
                     "task_id": str(task.id),
                     "trace_id": task.trace_id,
                     "step_id": str(step.id),
-                    "span_id": failed_tool_call.span_id,
-                    "tool_call_id": str(failed_tool_call.id),
+                    "span_id": completed_tool_call.span_id,
+                    "tool_call_id": str(completed_tool_call.id),
                     "tool_name": tool_name,
-                    "error": last_error,
+                    "retry_count": retry_count,
                 },
             )
-            return
-
-        step.status = TaskStepStatus.COMPLETED
-        step.output_payload = result
-        step.error_message = None
-        task.current_step = step.step_index
-        task.current_node = step.step_name
-        task.next_node = flow.next_node(step.step_name)
-        task.status = TaskStatus.WAITING_OBSERVATION
-        if updated_graph_state is None:
-            updated_graph_state = latest_graph_state
-        self._upsert_graph_snapshot(
-            task_id=task.id,
-            step_index=step.step_index,
-            current_node=task.current_node,
-            next_node=task.next_node,
-            graph_state=updated_graph_state,
-        )
-        task.graph_state_summary = self._build_graph_state_summary(
-            flow_name=task.flow_name,
-            current_node=task.current_node,
-            next_node=task.next_node,
-            graph_state=updated_graph_state,
-        )
-        completed_tool_call = ToolCall(
-            id=uuid4(),
-            task_id=task.id,
-            task_step_id=step.id,
-            span_id=step.span_id,
-            idempotency_key=idempotency_key,
-            tool_name=tool_name,
-            status=ToolCallStatus.COMPLETED,
-            retry_count=retry_count,
-            last_error=None,
-            started_at=started_at,
-            finished_at=finished_at,
-            request_payload=request_payload,
-            response_payload=result,
-            error_message=None,
-        )
-        self.db.add(completed_tool_call)
-        logger.info(
-            "tool_call.completed",
-            extra={
-                "task_id": str(task.id),
-                "trace_id": task.trace_id,
-                "step_id": str(step.id),
-                "span_id": completed_tool_call.span_id,
-                "tool_call_id": str(completed_tool_call.id),
-                "tool_name": tool_name,
-                "retry_count": retry_count,
-            },
-        )
 
     def _get_latest_graph_state(self, task_id: UUID) -> dict[str, Any]:
         stmt = (

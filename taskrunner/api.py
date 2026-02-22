@@ -16,8 +16,10 @@ from taskrunner.service import (
     TaskNotFoundError,
     TaskRunnerService,
 )
+from taskrunner.tracing import configure_tracing
 
 configure_logging()
+configure_tracing(service_name="taskrunner-api")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Task Runner", version="0.1.0")
