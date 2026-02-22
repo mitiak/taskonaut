@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from taskrunner.db import get_db
 from taskrunner.log_config import configure_logging
+from taskrunner.metrics import dump_metrics_snapshot
 from taskrunner.schemas import RunTaskRequest, TaskCreateRequest, TaskResponse
 from taskrunner.service import (
     InvalidFlowError,
@@ -95,3 +96,9 @@ def get_task(task_id: UUID, db: Session = Depends(get_db)) -> TaskResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     logger.info("get_task.succeeded", extra={"task_id": str(task_id)})
     return TaskResponse.model_validate(task)
+
+
+@app.get("/metrics")
+def metrics(db: Session = Depends(get_db)) -> Response:
+    payload = dump_metrics_snapshot(db)
+    return Response(content=payload, media_type="text/plain; version=0.0.4")

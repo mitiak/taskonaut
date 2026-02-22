@@ -15,6 +15,7 @@ def _task(task_id: UUID, status: TaskStatus) -> Task:
     now = datetime.now(UTC)
     task = Task(
         id=task_id,
+        trace_id="trace-123",
         status=status,
         flow_name="echo_add",
         current_step=0,

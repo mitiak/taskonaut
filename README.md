@@ -10,6 +10,8 @@ Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2,
 - Tenacity-based tool retries with exponential backoff (max 3 attempts)
 - Idempotent tool execution keyed by `(task_id, step_id, tool_name)`
 - Per-task DB locking during `advance` to prevent concurrent workers from racing
+- Structured JSON logs with per-task `trace_id` and per-step/tool-call `span_id`
+- Prometheus metrics snapshot exporter via CLI and API `/metrics`
 - HTTP API:
   - `POST /tasks` creates a task in `PLANNED` for the selected flow
   - `POST /tasks/{task_id}/advance` performs one transition
@@ -17,6 +19,9 @@ Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2,
   - `GET /tasks` lists all tasks
   - `GET /tasks/{task_id}` fetches task state
 - CLI:
+  - `taskrunner run --flow <name> --input '<json>'`
+  - `taskrunner show <task_id>`
+  - `taskrunner metrics dump`
   - `taskonaut run-flow`
   - `taskonaut run-graph --flow <name>`
   - `taskonaut get-task`
@@ -95,6 +100,13 @@ uv run uvicorn main:app --reload
 - If a duplicate execution path is hit for the same step/tool, the existing `tool_calls` row is reused.
 - `advance` acquires a PostgreSQL advisory transaction lock per task so only one worker can advance a given task at a time.
 
+## Trace Correlation
+
+- Every task gets a persistent `trace_id`.
+- Every step and tool call gets a `span_id`.
+- Tool call logs include `trace_id`, `span_id`, and `tool_call_id` for correlation.
+- `taskrunner show <task_id>` includes `trace_id` in output.
+
 ## API Usage
 
 Create task:
@@ -137,6 +149,24 @@ curl -s http://127.0.0.1:8000/tasks
 ```
 
 ## CLI Usage
+
+Local deterministic run (no API server required):
+
+```bash
+uv run taskrunner run --flow demo --input '{"text":"hi","a":2,"b":3}' --verbose
+```
+
+Show a task (includes `trace_id`):
+
+```bash
+uv run taskrunner show <task_id>
+```
+
+Dump Prometheus metrics snapshot:
+
+```bash
+uv run taskrunner metrics dump
+```
 
 Create + run flow (default mode):
 
@@ -202,6 +232,12 @@ Run API app via CLI with logster-formatted logs:
 
 ```bash
 uv run taskonaut --logster run-app --host 127.0.0.1 --port 8000 --reload
+```
+
+Prometheus endpoint (when API is running):
+
+```bash
+curl -s http://127.0.0.1:8000/metrics
 ```
 
 ## Quality Checks

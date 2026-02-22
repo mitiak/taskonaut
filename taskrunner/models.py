@@ -42,6 +42,7 @@ class Task(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
+    trace_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus, name="task_status", native_enum=False),
         nullable=False,
@@ -104,6 +105,7 @@ class TaskStep(Base):
     )
     step_index: Mapped[int] = mapped_column(Integer, nullable=False)
     step_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    span_id: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[TaskStepStatus] = mapped_column(
         Enum(TaskStepStatus, name="task_step_status", native_enum=False),
         nullable=False,
@@ -153,6 +155,7 @@ class ToolCall(Base):
         ForeignKey("task_steps.id", ondelete="CASCADE"),
         nullable=False,
     )
+    span_id: Mapped[str] = mapped_column(String(64), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[ToolCallStatus] = mapped_column(

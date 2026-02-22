@@ -10,7 +10,11 @@ from uuid import UUID
 import httpx
 import uvicorn
 
+from taskrunner.db import SessionLocal
 from taskrunner.log_config import configure_logging
+from taskrunner.metrics import dump_metrics_snapshot
+from taskrunner.schemas import TaskCreateRequest, TaskResponse
+from taskrunner.service import TaskNotFoundError, TaskRunnerService
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +38,13 @@ def _print_json_response(response: httpx.Response) -> None:
         print(response.text)
         return
     print(json.dumps(payload, indent=2))
+
+
+def _print_task_payload(task_payload: dict[str, object]) -> None:
+    trace_id = task_payload.get("trace_id")
+    if isinstance(trace_id, str):
+        print(f"trace_id: {trace_id}")
+    print(json.dumps(task_payload, indent=2))
 
 
 def _api_request(
@@ -224,6 +235,62 @@ def run_app_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_local_command(args: argparse.Namespace) -> int:
+    try:
+        parsed = json.loads(args.input)
+    except json.JSONDecodeError as exc:
+        print(f"Invalid --input JSON: {exc}")
+        return 1
+    if not isinstance(parsed, dict):
+        print("--input must be a JSON object")
+        return 1
+
+    try:
+        request = TaskCreateRequest.model_validate({**parsed, "flow_name": args.flow})
+    except Exception as exc:
+        print(f"Invalid input payload: {exc}")
+        return 1
+
+    with SessionLocal() as db:
+        service = TaskRunnerService(db)
+        task = service.create_task(request)
+        task = service.run_task(task.id, max_steps=args.max_steps)
+        payload = TaskResponse.model_validate(task).model_dump(mode="json")
+
+    _print_task_payload(payload)
+    logger.info(
+        "cli.run.succeeded",
+        extra={"task_id": payload["id"], "trace_id": payload["trace_id"], "flow_name": args.flow},
+    )
+    return 0
+
+
+def show_local_command(args: argparse.Namespace) -> int:
+    try:
+        task_id = UUID(args.task_id)
+    except ValueError:
+        print(f"Invalid task id: {args.task_id}")
+        return 1
+
+    with SessionLocal() as db:
+        service = TaskRunnerService(db)
+        try:
+            task = service.get_task(task_id)
+        except TaskNotFoundError as exc:
+            print(str(exc))
+            return 1
+        payload = TaskResponse.model_validate(task).model_dump(mode="json")
+
+    _print_task_payload(payload)
+    return 0
+
+
+def metrics_dump_command(_: argparse.Namespace) -> int:
+    with SessionLocal() as db:
+        print(dump_metrics_snapshot(db))
+    return 0
+
+
 def run_graph_command(args: argparse.Namespace) -> int:
     logger.info(
         "cli.run_graph.started",
@@ -272,7 +339,7 @@ def run_graph_command(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="taskonaut")
+    parser = argparse.ArgumentParser(prog="taskrunner")
     parser.add_argument(
         "--api-base-url",
         default=os.getenv("TASKONAUT_API_URL", os.getenv("TASKRUNNER_API_URL", "http://127.0.0.1:8000")),
@@ -287,7 +354,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--logster-config",
         help="Path to logster TOML config file",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging for CLI commands",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_local = subparsers.add_parser(
+        "run",
+        help="Run deterministic flow locally against DB without API server",
+    )
+    run_local.add_argument("--flow", required=True, help="Registered flow name")
+    run_local.add_argument(
+        "--input",
+        required=True,
+        help='JSON object input, e.g. \'{"text":"hi","a":2,"b":3}\'',
+    )
+    run_local.add_argument("--max-steps", type=int, default=32, help="Max transitions")
+    run_local.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    run_local.set_defaults(func=run_local_command)
+
+    show_local = subparsers.add_parser("show", help="Show task state by id (includes trace_id)")
+    show_local.add_argument("task_id", help="Task UUID")
+    show_local.set_defaults(func=show_local_command)
+
+    metrics = subparsers.add_parser("metrics", help="Metrics utilities")
+    metrics_subparsers = metrics.add_subparsers(dest="metrics_command", required=True)
+    metrics_dump = metrics_subparsers.add_parser("dump", help="Dump Prometheus metrics snapshot")
+    metrics_dump.set_defaults(func=metrics_dump_command)
 
     run_flow = subparsers.add_parser(
         "run-flow",
@@ -362,6 +457,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     configure_logging(
+        level="DEBUG" if args.verbose else None,
         log_style="logster" if args.logster else "json",
         logster_config_path=args.logster_config,
     )

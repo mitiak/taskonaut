@@ -4,9 +4,12 @@ from taskrunner.cli import (
     advance_task_command,
     build_parser,
     get_tasks_command,
+    metrics_dump_command,
     run_app_command,
     run_graph_command,
+    run_local_command,
     run_task_command,
+    show_local_command,
 )
 
 
@@ -58,3 +61,28 @@ def test_parser_supports_run_graph_subcommand() -> None:
     assert args.func is run_graph_command
     assert args.flow == "echo_add"
     assert args.max_steps == 7
+
+
+def test_parser_supports_local_run_subcommand() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["run", "--flow", "demo", "--input", '{"text":"hi","a":2,"b":3}', "--verbose"]
+    )
+
+    assert args.func is run_local_command
+    assert args.flow == "demo"
+    assert args.verbose is True
+
+
+def test_parser_supports_show_subcommand() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["show", "123e4567-e89b-12d3-a456-426614174000"])
+
+    assert args.func is show_local_command
+
+
+def test_parser_supports_metrics_dump_subcommand() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["metrics", "dump"])
+
+    assert args.func is metrics_dump_command

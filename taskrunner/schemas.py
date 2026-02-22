@@ -30,6 +30,7 @@ class ToolCallResponse(StrictBaseModel):
     id: UUID
     task_id: UUID
     task_step_id: UUID
+    span_id: str
     idempotency_key: str
     tool_name: str
     status: ToolCallStatus
@@ -50,6 +51,7 @@ class TaskStepResponse(StrictBaseModel):
     task_id: UUID
     step_index: int
     step_name: str
+    span_id: str
     status: TaskStepStatus
     input_payload: dict[str, Any]
     output_payload: dict[str, Any] | None
@@ -63,6 +65,7 @@ class TaskResponse(StrictBaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     id: UUID
+    trace_id: str
     status: TaskStatus
     flow_name: str
     current_step: int

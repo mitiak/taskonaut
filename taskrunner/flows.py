@@ -63,6 +63,10 @@ _FLOW_NODE_HANDLERS: dict[str, dict[str, Any]] = {
         "echo": _echo_node,
         "add": _add_node,
     },
+    "demo": {
+        "echo": _echo_node,
+        "add": _add_node,
+    },
     "add_echo": {
         "add": _add_node,
         "echo": _echo_node,
@@ -71,6 +75,7 @@ _FLOW_NODE_HANDLERS: dict[str, dict[str, Any]] = {
 
 _FLOW_NODE_SEQUENCES: dict[str, tuple[str, ...]] = {
     "echo_add": ("echo", "add"),
+    "demo": ("echo", "add"),
     "add_echo": ("add", "echo"),
 }
 

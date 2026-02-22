@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
@@ -63,6 +63,7 @@ class TaskRunnerService:
             extra={"text": request.text, "a": request.a, "b": request.b, "flow_name": flow.name},
         )
         task = Task(
+            trace_id=str(uuid4()),
             status=TaskStatus.PLANNED,
             flow_name=flow.name,
             current_step=0,
@@ -85,6 +86,7 @@ class TaskRunnerService:
                 task_id=task.id,
                 step_index=index,
                 step_name=node_name,
+                span_id=str(uuid4()),
                 status=TaskStepStatus.PLANNED,
                 input_payload=build_step_input_payload(request=request, node_name=node_name),
             )
@@ -99,7 +101,10 @@ class TaskRunnerService:
             graph_state=initial_graph_state,
         )
         self.db.commit()
-        logger.info("task.create.succeeded", extra={"task_id": str(task.id)})
+        logger.info(
+            "task.create.succeeded",
+            extra={"task_id": str(task.id), "trace_id": task.trace_id},
+        )
         return self.get_task(task.id)
 
     def advance_task(self, task_id: UUID) -> Task:
@@ -108,13 +113,21 @@ class TaskRunnerService:
             task = self._get_task_for_update(task_id)
             logger.info(
                 "task.advance.started",
-                extra={"task_id": str(task.id), "status": task.status.value},
+                extra={
+                    "task_id": str(task.id),
+                    "status": task.status.value,
+                    "trace_id": task.trace_id,
+                },
             )
 
             if task.status in TERMINAL_TASK_STATUSES:
                 logger.info(
                     "task.advance.terminal",
-                    extra={"task_id": str(task.id), "status": task.status.value},
+                    extra={
+                        "task_id": str(task.id),
+                        "status": task.status.value,
+                        "trace_id": task.trace_id,
+                    },
                 )
                 self.db.commit()
                 return self.get_task(task.id)
@@ -130,7 +143,11 @@ class TaskRunnerService:
                 )
                 logger.info(
                     "task.advance.transition",
-                    extra={"task_id": str(task.id), "to": task.status.value},
+                    extra={
+                        "task_id": str(task.id),
+                        "to": task.status.value,
+                        "trace_id": task.trace_id,
+                    },
                 )
                 self.db.commit()
                 return self.get_task(task.id)
@@ -146,14 +163,21 @@ class TaskRunnerService:
                         next_node=task.next_node,
                         graph_state=self._get_latest_graph_state(task.id),
                     )
-                    logger.error("task.advance.no_step", extra={"task_id": str(task.id)})
+                    logger.error(
+                        "task.advance.no_step",
+                        extra={"task_id": str(task.id), "trace_id": task.trace_id},
+                    )
                     self.db.commit()
                     return self.get_task(task.id)
 
                 self._execute_step(task, next_step)
                 logger.info(
                     "task.advance.executed",
-                    extra={"task_id": str(task.id), "step": next_step.step_name},
+                    extra={
+                        "task_id": str(task.id),
+                        "step": next_step.step_name,
+                        "trace_id": task.trace_id,
+                    },
                 )
                 self.db.commit()
                 return self.get_task(task.id)
@@ -174,7 +198,11 @@ class TaskRunnerService:
                 )
                 logger.info(
                     "task.advance.transition",
-                    extra={"task_id": str(task.id), "to": task.status.value},
+                    extra={
+                        "task_id": str(task.id),
+                        "to": task.status.value,
+                        "trace_id": task.trace_id,
+                    },
                 )
                 self.db.commit()
                 return self.get_task(task.id)
@@ -190,7 +218,11 @@ class TaskRunnerService:
             )
             logger.error(
                 "task.advance.invalid_state",
-                extra={"task_id": str(task.id), "status": previous_status},
+                extra={
+                    "task_id": str(task.id),
+                    "status": previous_status,
+                    "trace_id": task.trace_id,
+                },
             )
             self.db.commit()
             return self.get_task(task.id)
@@ -379,9 +411,24 @@ class TaskRunnerService:
                 "tool.execute.idempotent_reuse",
                 extra={
                     "task_id": str(task.id),
+                    "trace_id": task.trace_id,
                     "step_id": str(step.id),
                     "tool_name": tool_name,
                     "idempotency_key": idempotency_key,
+                    "span_id": existing_call.span_id,
+                    "tool_call_id": str(existing_call.id),
+                },
+            )
+            logger.info(
+                "tool_call.reused",
+                extra={
+                    "task_id": str(task.id),
+                    "trace_id": task.trace_id,
+                    "step_id": str(step.id),
+                    "span_id": existing_call.span_id,
+                    "tool_call_id": str(existing_call.id),
+                    "tool_name": tool_name,
+                    "status": existing_call.status.value,
                 },
             )
             return
@@ -389,12 +436,12 @@ class TaskRunnerService:
         latest_graph_state = self._get_latest_graph_state(task_id=task.id)
         result, updated_graph_state, last_error, retry_count, started_at, finished_at = (
             self._run_tool_with_retry(
-            task_id=task.id,
-            step_id=step.id,
-            flow_name=task.flow_name,
-            node_name=tool_name,
-            graph_state=latest_graph_state,
-        )
+                task_id=task.id,
+                step_id=step.id,
+                flow_name=task.flow_name,
+                node_name=tool_name,
+                graph_state=latest_graph_state,
+            )
         )
         if result is None:
             step.status = TaskStepStatus.FAILED
@@ -409,21 +456,34 @@ class TaskRunnerService:
                 next_node=task.next_node,
                 graph_state=latest_graph_state,
             )
-            self.db.add(
-                ToolCall(
-                    task_id=task.id,
-                    task_step_id=step.id,
-                    idempotency_key=idempotency_key,
-                    tool_name=tool_name,
-                    status=ToolCallStatus.FAILED,
-                    retry_count=retry_count,
-                    last_error=last_error,
-                    started_at=started_at,
-                    finished_at=finished_at,
-                    request_payload=request_payload,
-                    response_payload=None,
-                    error_message=last_error,
-                )
+            failed_tool_call = ToolCall(
+                id=uuid4(),
+                task_id=task.id,
+                task_step_id=step.id,
+                span_id=step.span_id,
+                idempotency_key=idempotency_key,
+                tool_name=tool_name,
+                status=ToolCallStatus.FAILED,
+                retry_count=retry_count,
+                last_error=last_error,
+                started_at=started_at,
+                finished_at=finished_at,
+                request_payload=request_payload,
+                response_payload=None,
+                error_message=last_error,
+            )
+            self.db.add(failed_tool_call)
+            logger.error(
+                "tool_call.failed",
+                extra={
+                    "task_id": str(task.id),
+                    "trace_id": task.trace_id,
+                    "step_id": str(step.id),
+                    "span_id": failed_tool_call.span_id,
+                    "tool_call_id": str(failed_tool_call.id),
+                    "tool_name": tool_name,
+                    "error": last_error,
+                },
             )
             return
 
@@ -449,21 +509,34 @@ class TaskRunnerService:
             next_node=task.next_node,
             graph_state=updated_graph_state,
         )
-        self.db.add(
-            ToolCall(
-                task_id=task.id,
-                task_step_id=step.id,
-                idempotency_key=idempotency_key,
-                tool_name=tool_name,
-                status=ToolCallStatus.COMPLETED,
-                retry_count=retry_count,
-                last_error=None,
-                started_at=started_at,
-                finished_at=finished_at,
-                request_payload=request_payload,
-                response_payload=result,
-                error_message=None,
-                )
+        completed_tool_call = ToolCall(
+            id=uuid4(),
+            task_id=task.id,
+            task_step_id=step.id,
+            span_id=step.span_id,
+            idempotency_key=idempotency_key,
+            tool_name=tool_name,
+            status=ToolCallStatus.COMPLETED,
+            retry_count=retry_count,
+            last_error=None,
+            started_at=started_at,
+            finished_at=finished_at,
+            request_payload=request_payload,
+            response_payload=result,
+            error_message=None,
+        )
+        self.db.add(completed_tool_call)
+        logger.info(
+            "tool_call.completed",
+            extra={
+                "task_id": str(task.id),
+                "trace_id": task.trace_id,
+                "step_id": str(step.id),
+                "span_id": completed_tool_call.span_id,
+                "tool_call_id": str(completed_tool_call.id),
+                "tool_name": tool_name,
+                "retry_count": retry_count,
+            },
         )
 
     def _get_latest_graph_state(self, task_id: UUID) -> dict[str, Any]:

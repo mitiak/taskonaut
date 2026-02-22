@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add trace correlation fields: `trace_id` on tasks and `span_id` on steps/tool calls.
+- Add structured tool-call logs with `trace_id`, `span_id`, and `tool_call_id`.
+- Add local CLI commands: `taskrunner run`, `taskrunner show`, and `taskrunner metrics dump`.
+- Add Prometheus metrics snapshot generation and `/metrics` API endpoint.
+- Add migration for trace/span schema changes.
+- Add `taskrunner` console script alias.
+
 ## 0.4.0 - 2026-02-22
 
 - Integrate deterministic LangGraph flow execution (no LLM) with registered flows `echo_add` and `add_echo`.
