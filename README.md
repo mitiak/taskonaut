@@ -12,6 +12,9 @@ Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2,
 - Per-task DB locking during `advance` to prevent concurrent workers from racing
 - Structured JSON logs with per-task `trace_id` and per-step/tool-call `span_id`
 - Prometheus metrics snapshot exporter via CLI and API `/metrics`
+- Allowlisted tool registry with strict input/output schema enforcement
+- Always-on policy limits: `max_input_bytes`, `max_steps`, `tool_timeout_secs`
+- Audit logging for policy violations and rejected tool calls
 - HTTP API:
   - `POST /tasks` creates a task in `PLANNED` for the selected flow
   - `POST /tasks/{task_id}/advance` performs one transition
@@ -21,6 +24,7 @@ Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2,
 - CLI:
   - `taskrunner run --flow <name> --input '<json>'`
   - `taskrunner show <task_id>`
+  - `taskrunner validate --flow <name> --input '<json>'`
   - `taskrunner metrics dump`
   - `taskonaut run-flow`
   - `taskonaut run-graph --flow <name>`
@@ -120,6 +124,16 @@ uv run uvicorn main:app --reload
 - `taskrunner show <task_id>` includes `trace_id` in output.
 - CLI prints a Jaeger trace URL for tasks when `trace_id` is present.
 
+## Policy Guardrails
+
+- Only allowlisted tools can execute.
+- Tool input and output are both strictly validated with Pydantic (no coercion).
+- Global limits:
+  - `TASKRUNNER_MAX_INPUT_BYTES` (default `65536`)
+  - `TASKRUNNER_MAX_STEPS` (default `64`)
+  - `TASKRUNNER_TOOL_TIMEOUT_SECS` (default `2.0`)
+- Violations are written to `audit_logs` and surface as clear CLI policy errors.
+
 ## Jaeger Visualization
 
 1. Start Jaeger:
@@ -183,6 +197,18 @@ Local deterministic run (no API server required):
 
 ```bash
 uv run taskrunner run --flow demo --input '{"text":"hi","a":2,"b":3}' --verbose
+```
+
+Validate flow input without executing tools:
+
+```bash
+uv run taskrunner validate --flow demo --input '{"text":123,"a":"x","b":3}'
+```
+
+Large input policy check:
+
+```bash
+uv run taskrunner run --flow demo --input '<very large json>'
 ```
 
 Show a task (includes `trace_id`):

@@ -10,7 +10,7 @@ from taskrunner.models import TaskStatus, TaskStepStatus, ToolCallStatus
 
 
 class StrictBaseModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class TaskCreateRequest(StrictBaseModel):

@@ -4,10 +4,10 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from logster.config import load_config
-from logster.format import format_record
+from logster.config import load_config  # type: ignore[import-untyped]
+from logster.format import format_record  # type: ignore[import-untyped]
 
 _BASE_LOG_RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__.keys())
 
@@ -48,7 +48,7 @@ class LogsterFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload = _payload_from_record(record)
-        return format_record(
+        rendered = format_record(
             payload,
             use_color=not self.config.no_color,
             output_style=self.config.output_style,
@@ -63,6 +63,7 @@ class LogsterFormatter(logging.Formatter):
             verbose_metadata_punctuation_color=self.config.verbose_metadata_punctuation_color,
             fields=self.config.fields,
         )
+        return cast(str, rendered)
 
 
 def configure_logging(
@@ -72,7 +73,8 @@ def configure_logging(
     logster_config_path: str | None = None,
 ) -> None:
     logger = logging.getLogger("taskrunner")
-    style = (log_style or os.getenv("LOG_STYLE", "json")).lower()
+    configured_style = log_style or os.getenv("LOG_STYLE", "json") or "json"
+    style = configured_style.lower()
     existing_styles = [
         getattr(handler, "_taskrunner_logging_style", None)
         for handler in logger.handlers
@@ -102,5 +104,6 @@ def configure_logging(
     handler._taskrunner_logging_style = style  # type: ignore[attr-defined]
 
     logger.addHandler(handler)
-    logger.setLevel(level or os.getenv("LOG_LEVEL", "INFO"))
+    level_name: str = cast(str, level or os.getenv("LOG_LEVEL", "INFO") or "INFO")
+    logger.setLevel(level_name)
     logger.propagate = False

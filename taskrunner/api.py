@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from taskrunner.db import get_db
 from taskrunner.log_config import configure_logging
 from taskrunner.metrics import dump_metrics_snapshot
+from taskrunner.policy import PolicyViolationError
 from taskrunner.schemas import RunTaskRequest, TaskCreateRequest, TaskResponse
 from taskrunner.service import (
     InvalidFlowError,
@@ -36,6 +37,11 @@ def create_task(request: TaskCreateRequest, db: Session = Depends(get_db)) -> Ta
         task = service.create_task(request)
     except InvalidFlowError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PolicyViolationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{exc.code}: {exc.message}",
+        ) from exc
     logger.info("create_task.succeeded", extra={"task_id": str(task.id)})
     return TaskResponse.model_validate(task)
 
@@ -73,6 +79,11 @@ def run_task(
             extra={"task_id": str(task_id), "max_steps": request.max_steps},
         )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except PolicyViolationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{exc.code}: {exc.message}",
+        ) from exc
     logger.info(
         "run_task.succeeded",
         extra={"task_id": str(task_id), "status": task.status.value},

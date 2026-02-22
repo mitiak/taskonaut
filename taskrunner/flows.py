@@ -5,8 +5,9 @@ from typing import Any, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
 
+from taskrunner.policy import get_policy_limits
 from taskrunner.schemas import TaskCreateRequest
-from taskrunner.tools import AddInput, EchoInput, add, echo
+from taskrunner.tool_registry import execute_tool
 
 
 class GraphExecutionState(TypedDict, total=False):
@@ -37,12 +38,18 @@ class FlowDefinition:
 
 
 def _echo_node(state: GraphExecutionState) -> dict[str, Any]:
-    output = echo(EchoInput(text=state["text"])).model_dump()
+    limits = get_policy_limits()
+    output = execute_tool("echo", {"text": state["text"]}, timeout_secs=limits.tool_timeout_secs)
     return {"echo_result": output}
 
 
 def _add_node(state: GraphExecutionState) -> dict[str, Any]:
-    output = add(AddInput(a=state["a"], b=state["b"])).model_dump()
+    limits = get_policy_limits()
+    output = execute_tool(
+        "add",
+        {"a": state["a"], "b": state["b"]},
+        timeout_secs=limits.tool_timeout_secs,
+    )
     return {"add_result": output}
 
 

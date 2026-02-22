@@ -13,7 +13,8 @@ import uvicorn
 from taskrunner.db import SessionLocal
 from taskrunner.log_config import configure_logging
 from taskrunner.metrics import dump_metrics_snapshot
-from taskrunner.schemas import TaskCreateRequest, TaskResponse
+from taskrunner.policy import PolicyViolationError
+from taskrunner.schemas import TaskResponse
 from taskrunner.service import TaskNotFoundError, TaskRunnerService
 from taskrunner.tracing import configure_tracing
 
@@ -242,25 +243,19 @@ def run_app_command(args: argparse.Namespace) -> int:
 
 
 def run_local_command(args: argparse.Namespace) -> int:
-    try:
-        parsed = json.loads(args.input)
-    except json.JSONDecodeError as exc:
-        print(f"Invalid --input JSON: {exc}")
-        return 1
-    if not isinstance(parsed, dict):
-        print("--input must be a JSON object")
-        return 1
-
-    try:
-        request = TaskCreateRequest.model_validate({**parsed, "flow_name": args.flow})
-    except Exception as exc:
-        print(f"Invalid input payload: {exc}")
-        return 1
-
     with SessionLocal() as db:
         service = TaskRunnerService(db)
+        try:
+            request = service.validate_request_payload(flow_name=args.flow, raw_input=args.input)
+        except PolicyViolationError as exc:
+            print(f"Policy violation [{exc.code}]: {exc.message}")
+            return 2
         task = service.create_task(request)
-        task = service.run_task(task.id, max_steps=args.max_steps)
+        try:
+            task = service.run_task(task.id, max_steps=args.max_steps)
+        except PolicyViolationError as exc:
+            print(f"Policy violation [{exc.code}]: {exc.message}")
+            return 2
         payload = TaskResponse.model_validate(task).model_dump(mode="json")
 
     _print_task_payload(payload)
@@ -294,6 +289,18 @@ def show_local_command(args: argparse.Namespace) -> int:
 def metrics_dump_command(_: argparse.Namespace) -> int:
     with SessionLocal() as db:
         print(dump_metrics_snapshot(db))
+    return 0
+
+
+def validate_local_command(args: argparse.Namespace) -> int:
+    with SessionLocal() as db:
+        service = TaskRunnerService(db)
+        try:
+            request = service.validate_request_payload(flow_name=args.flow, raw_input=args.input)
+        except PolicyViolationError as exc:
+            print(f"Policy violation [{exc.code}]: {exc.message}")
+            return 2
+    print(f"Validation passed for flow '{request.flow_name}'")
     return 0
 
 
@@ -380,6 +387,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_local.add_argument("--max-steps", type=int, default=32, help="Max transitions")
     run_local.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     run_local.set_defaults(func=run_local_command)
+
+    validate_local = subparsers.add_parser(
+        "validate",
+        help="Validate flow input and tool schemas/policy without executing tools",
+    )
+    validate_local.add_argument("--flow", required=True, help="Registered flow name")
+    validate_local.add_argument("--input", required=True, help="JSON object input")
+    validate_local.set_defaults(func=validate_local_command)
 
     show_local = subparsers.add_parser("show", help="Show task state by id (includes trace_id)")
     show_local.add_argument("task_id", help="Task UUID")

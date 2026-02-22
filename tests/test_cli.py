@@ -10,6 +10,7 @@ from taskrunner.cli import (
     run_local_command,
     run_task_command,
     show_local_command,
+    validate_local_command,
 )
 
 
@@ -86,3 +87,10 @@ def test_parser_supports_metrics_dump_subcommand() -> None:
     args = parser.parse_args(["metrics", "dump"])
 
     assert args.func is metrics_dump_command
+
+
+def test_parser_supports_validate_subcommand() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["validate", "--flow", "demo", "--input", '{"text":"x","a":1,"b":2}'])
+
+    assert args.func is validate_local_command

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-02-22
+
 ## 0.5.0 - 2026-02-22
 
 - Add trace correlation fields: `trace_id` on tasks and `span_id` on steps/tool calls.
@@ -11,6 +13,11 @@
 - Add migration for trace/span schema changes.
 - Add `taskrunner` console script alias.
 - Add Jaeger (OpenTelemetry OTLP) integration docs and Docker Compose service for trace visualization.
+- Add allowlisted tool registry and reject unknown tools before execution.
+- Enforce strict Pydantic validation for tool inputs and outputs.
+- Add policy limits: `max_input_bytes`, `max_steps`, and `tool_timeout_secs`.
+- Add `audit_logs` table for rejected tool calls and policy violations.
+- Add CLI `validate` command and explicit non-zero policy violation exits.
 
 ## 0.4.0 - 2026-02-22
 

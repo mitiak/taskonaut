@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from json import dumps
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
-from tenacity import Retrying, stop_after_attempt, wait_exponential
+from tenacity import Retrying, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 from taskrunner.flows import (
     build_initial_graph_state,
@@ -16,6 +17,7 @@ from taskrunner.flows import (
     get_flow_definition,
 )
 from taskrunner.models import (
+    AuditLog,
     GraphStateSnapshot,
     Task,
     TaskStatus,
@@ -24,7 +26,9 @@ from taskrunner.models import (
     ToolCall,
     ToolCallStatus,
 )
+from taskrunner.policy import PolicyViolationError, get_policy_limits
 from taskrunner.schemas import TaskCreateRequest
+from taskrunner.tool_registry import get_tool_spec, validate_tool_input
 from taskrunner.tracing import format_span_id, format_trace_id, get_tracer
 
 logger = logging.getLogger(__name__)
@@ -53,12 +57,125 @@ class TaskRunnerService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    def _audit_policy_violation(
+        self,
+        *,
+        code: str,
+        message: str,
+        task_id: UUID | None = None,
+        step_id: UUID | None = None,
+        tool_name: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.db.add(
+            AuditLog(
+                task_id=task_id,
+                task_step_id=step_id,
+                tool_name=tool_name,
+                violation_code=code,
+                message=message,
+                payload=payload or {},
+            )
+        )
+
+    def validate_request_payload(
+        self,
+        *,
+        flow_name: str,
+        raw_input: str,
+    ) -> TaskCreateRequest:
+        limits = get_policy_limits()
+        input_bytes = len(raw_input.encode("utf-8"))
+        if input_bytes > limits.max_input_bytes:
+            message = (
+                "Input payload is "
+                f"{input_bytes} bytes, exceeds max_input_bytes={limits.max_input_bytes}"
+            )
+            self._audit_policy_violation(
+                code="MAX_INPUT_BYTES_EXCEEDED",
+                message=message,
+                payload={"input_bytes": input_bytes, "max_input_bytes": limits.max_input_bytes},
+            )
+            self.db.commit()
+            raise PolicyViolationError("MAX_INPUT_BYTES_EXCEEDED", message)
+
+        try:
+            request = TaskCreateRequest.model_validate_json(raw_input, strict=True)
+        except Exception as exc:
+            message = f"Task input schema validation failed: {exc}"
+            self._audit_policy_violation(
+                code="INVALID_TASK_INPUT_SCHEMA",
+                message=message,
+                payload={"flow_name": flow_name},
+            )
+            self.db.commit()
+            raise PolicyViolationError("INVALID_TASK_INPUT_SCHEMA", message) from exc
+
+        if request.flow_name != flow_name:
+            request = request.model_copy(update={"flow_name": flow_name})
+
+        self._validate_tool_plan(request=request, raw_input_bytes=input_bytes)
+        return request
+
+    def _validate_tool_plan(self, *, request: TaskCreateRequest, raw_input_bytes: int) -> None:
+        try:
+            flow = get_flow_definition(request.flow_name)
+        except ValueError as exc:
+            message = str(exc)
+            self._audit_policy_violation(
+                code="INVALID_FLOW",
+                message=message,
+                payload={"flow_name": request.flow_name},
+            )
+            self.db.commit()
+            raise PolicyViolationError("INVALID_FLOW", message) from exc
+
+        limits = get_policy_limits()
+        if raw_input_bytes > limits.max_input_bytes:
+            message = (
+                "Input payload is "
+                f"{raw_input_bytes} bytes, exceeds max_input_bytes={limits.max_input_bytes}"
+            )
+            self._audit_policy_violation(
+                code="MAX_INPUT_BYTES_EXCEEDED",
+                message=message,
+                payload={"input_bytes": raw_input_bytes, "max_input_bytes": limits.max_input_bytes},
+            )
+            self.db.commit()
+            raise PolicyViolationError("MAX_INPUT_BYTES_EXCEEDED", message)
+
+        for node_name in flow.node_sequence:
+            try:
+                step_payload = build_step_input_payload(request=request, node_name=node_name)
+            except ValueError as exc:
+                message = str(exc)
+                self._audit_policy_violation(
+                    code="UNKNOWN_TOOL",
+                    message=message,
+                    tool_name=node_name,
+                    payload={"flow_name": request.flow_name},
+                )
+                self.db.commit()
+                raise PolicyViolationError("UNKNOWN_TOOL", message) from exc
+            try:
+                get_tool_spec(node_name)
+                validate_tool_input(node_name, step_payload)
+            except PolicyViolationError as exc:
+                self._audit_policy_violation(
+                    code=exc.code,
+                    message=exc.message,
+                    tool_name=node_name,
+                    payload={"flow_name": request.flow_name, "step_payload": step_payload},
+                )
+                self.db.commit()
+                raise
+
     def create_task(self, request: TaskCreateRequest) -> Task:
         with tracer.start_as_current_span("task.create") as span:
-            try:
-                flow = get_flow_definition(request.flow_name)
-            except ValueError as exc:
-                raise InvalidFlowError(str(exc)) from exc
+            request_json = dumps(request.model_dump(), separators=(",", ":"))
+            raw_input_bytes = len(request_json.encode("utf-8"))
+            self._validate_tool_plan(request=request, raw_input_bytes=raw_input_bytes)
+            flow = get_flow_definition(request.flow_name)
 
             initial_graph_state = dict(build_initial_graph_state(request))
             first_node = flow.first_node()
@@ -252,6 +369,17 @@ class TaskRunnerService:
     def run_task(self, task_id: UUID, max_steps: int) -> Task:
         if max_steps < 1:
             raise ValueError("max_steps must be >= 1")
+        limits = get_policy_limits()
+        if max_steps > limits.max_steps:
+            message = f"max_steps={max_steps} exceeds policy max_steps={limits.max_steps}"
+            self._audit_policy_violation(
+                code="MAX_STEPS_EXCEEDED",
+                message=message,
+                task_id=task_id,
+                payload={"max_steps": max_steps, "policy_max_steps": limits.max_steps},
+            )
+            self.db.commit()
+            raise PolicyViolationError("MAX_STEPS_EXCEEDED", message)
 
         task = self.get_task(task_id)
         for _ in range(max_steps):
@@ -339,6 +467,7 @@ class TaskRunnerService:
                     min=TOOL_WAIT_MIN_SECONDS,
                     max=TOOL_WAIT_MAX_SECONDS,
                 ),
+                retry=retry_if_not_exception_type(PolicyViolationError),
                 reraise=True,
             ):
                 with attempt:
@@ -356,6 +485,8 @@ class TaskRunnerService:
                         started_at,
                         datetime.now(UTC),
                     )
+        except PolicyViolationError:
+            raise
         except Exception as exc:
             attempts = max(1, attempts)
             last_error = str(exc)
@@ -371,6 +502,49 @@ class TaskRunnerService:
             )
             return None, None, last_error, max(0, attempts - 1), started_at, datetime.now(UTC)
         raise RuntimeError("unreachable: retry loop exited without returning")
+
+    def _fail_step_with_policy_violation(
+        self,
+        *,
+        task: Task,
+        step: TaskStep,
+        tool_name: str,
+        code: str,
+        message: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        step.status = TaskStepStatus.FAILED
+        step.error_message = message
+        task.status = TaskStatus.FAILED
+        task.current_step = step.step_index
+        task.current_node = step.step_name
+        task.next_node = None
+        task.graph_state_summary = self._build_graph_state_summary(
+            flow_name=task.flow_name,
+            current_node=task.current_node,
+            next_node=task.next_node,
+            graph_state=self._get_latest_graph_state(task.id),
+        )
+        self._audit_policy_violation(
+            code=code,
+            message=message,
+            task_id=task.id,
+            step_id=step.id,
+            tool_name=tool_name,
+            payload=payload,
+        )
+        logger.error(
+            "policy.violation",
+            extra={
+                "task_id": str(task.id),
+                "trace_id": task.trace_id,
+                "step_id": str(step.id),
+                "span_id": step.span_id,
+                "tool_name": tool_name,
+                "violation_code": code,
+                "error": message,
+            },
+        )
 
     def _execute_step(self, task: Task, step: TaskStep) -> None:
         with tracer.start_as_current_span(
@@ -388,6 +562,20 @@ class TaskRunnerService:
 
             tool_name = step.step_name
             request_payload = step.input_payload
+            try:
+                get_tool_spec(tool_name)
+                validate_tool_input(tool_name, request_payload)
+            except PolicyViolationError as exc:
+                self._fail_step_with_policy_violation(
+                    task=task,
+                    step=step,
+                    tool_name=tool_name,
+                    code=exc.code,
+                    message=exc.message,
+                    payload={"step_input": request_payload},
+                )
+                return
+
             flow = get_flow_definition(task.flow_name)
             idempotency_key = self._build_tool_call_idempotency_key(task.id, step.id, tool_name)
             existing_call = self.db.scalar(
@@ -464,15 +652,27 @@ class TaskRunnerService:
                 return
 
             latest_graph_state = self._get_latest_graph_state(task_id=task.id)
-            result, updated_graph_state, last_error, retry_count, started_at, finished_at = (
-                self._run_tool_with_retry(
-                    task_id=task.id,
-                    step_id=step.id,
-                    flow_name=task.flow_name,
-                    node_name=tool_name,
-                    graph_state=latest_graph_state,
+            try:
+                result, updated_graph_state, last_error, retry_count, started_at, finished_at = (
+                    self._run_tool_with_retry(
+                        task_id=task.id,
+                        step_id=step.id,
+                        flow_name=task.flow_name,
+                        node_name=tool_name,
+                        graph_state=latest_graph_state,
+                    )
                 )
-            )
+            except PolicyViolationError as exc:
+                self._fail_step_with_policy_violation(
+                    task=task,
+                    step=step,
+                    tool_name=step.step_name,
+                    code=exc.code,
+                    message=exc.message,
+                    payload={"step_input": step.input_payload},
+                )
+                return
+
             if result is None:
                 step.status = TaskStepStatus.FAILED
                 step.error_message = last_error
