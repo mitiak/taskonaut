@@ -50,9 +50,12 @@ class Task(Base):
     flow_name: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
-        default="predefined_echo_add",
+        default="echo_add",
     )
     current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    current_node: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    next_node: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    graph_state_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     input_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     output_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -75,6 +78,11 @@ class Task(Base):
         back_populates="task",
         cascade="all, delete-orphan",
         order_by="ToolCall.created_at",
+    )
+    graph_state_snapshots: Mapped[list[GraphStateSnapshot]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="GraphStateSnapshot.step_index",
     )
 
 
@@ -166,3 +174,32 @@ class ToolCall(Base):
 
     task: Mapped[Task] = relationship(back_populates="tool_calls")
     step: Mapped[TaskStep] = relationship(back_populates="tool_calls")
+
+
+class GraphStateSnapshot(Base):
+    __tablename__ = "graph_state_snapshots"
+    __table_args__ = (
+        UniqueConstraint("task_id", "step_index", name="uq_graph_state_snapshots_task_step"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    current_node: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    next_node: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    graph_state: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    task: Mapped[Task] = relationship(back_populates="graph_state_snapshots")

@@ -16,8 +16,11 @@ def _task(task_id: UUID, status: TaskStatus) -> Task:
     task = Task(
         id=task_id,
         status=status,
-        flow_name="predefined_echo_add",
+        flow_name="echo_add",
         current_step=0,
+        current_node="echo",
+        next_node="add",
+        graph_state_summary={"flow": "echo_add", "total_nodes": 2, "completed_nodes": ["echo"]},
         input_payload={"text": "hello", "a": 2, "b": 3},
         output_payload=None,
         created_at=now,
@@ -46,6 +49,8 @@ def test_create_task_returns_201(monkeypatch) -> None:
     assert response.status_code == 201
     assert response.json()["id"] == str(task_id)
     assert response.json()["status"] == TaskStatus.PLANNED.value
+    assert response.json()["current_node"] == "echo"
+    assert response.json()["next_node"] == "add"
 
 
 def test_advance_task_returns_200(monkeypatch) -> None:

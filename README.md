@@ -1,23 +1,24 @@
 # taskonaut
 
-Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, and PostgreSQL.
+Deterministic taskonaut service in Python 3.12 using `uv`, FastAPI, Pydantic v2, SQLAlchemy 2, LangGraph, Alembic, and PostgreSQL.
 
 ## Features
 
-- Deterministic state machine for a predefined flow: `echo` then `add`
+- Deterministic LangGraph-based state graphs (no LLM) with registered flows (`echo_add`, `add_echo`)
 - Tool contracts with Pydantic input/output models
-- PostgreSQL persistence across `tasks`, `task_steps`, and `tool_calls`
+- PostgreSQL persistence across `tasks`, `task_steps`, `tool_calls`, and `graph_state_snapshots`
 - Tenacity-based tool retries with exponential backoff (max 3 attempts)
 - Idempotent tool execution keyed by `(task_id, step_id, tool_name)`
 - Per-task DB locking during `advance` to prevent concurrent workers from racing
 - HTTP API:
-  - `POST /tasks` creates a task in `PLANNED`
+  - `POST /tasks` creates a task in `PLANNED` for the selected flow
   - `POST /tasks/{task_id}/advance` performs one transition
   - `POST /tasks/{task_id}/run` advances until terminal state (guarded by `max_steps`)
   - `GET /tasks` lists all tasks
   - `GET /tasks/{task_id}` fetches task state
 - CLI:
   - `taskonaut run-flow`
+  - `taskonaut run-graph --flow <name>`
   - `taskonaut get-task`
 
 ## Requirements
@@ -101,7 +102,7 @@ Create task:
 ```bash
 curl -s -X POST http://127.0.0.1:8000/tasks \
   -H 'Content-Type: application/json' \
-  -d '{"text":"hello","a":2,"b":3}'
+  -d '{"text":"hello","a":2,"b":3,"flow_name":"echo_add"}'
 ```
 
 Advance one step:
@@ -124,6 +125,11 @@ Fetch task:
 curl -s http://127.0.0.1:8000/tasks/<task_id>
 ```
 
+`GET /tasks/{task_id}` now includes:
+- `current_node`
+- `next_node`
+- `graph_state_summary`
+
 List tasks:
 
 ```bash
@@ -135,19 +141,25 @@ curl -s http://127.0.0.1:8000/tasks
 Create + run flow (default mode):
 
 ```bash
-uv run taskonaut run-flow --text hello --a 2 --b 3
+uv run taskonaut run-flow --flow echo_add --text hello --a 2 --b 3
 ```
 
 Create + advance only once:
 
 ```bash
-uv run taskonaut run-flow --mode advance --text hello --a 2 --b 3
+uv run taskonaut run-flow --flow add_echo --mode advance --text hello --a 2 --b 3
 ```
 
 Create only (leave task in PLANNED):
 
 ```bash
-uv run taskonaut run-flow --mode create --text hello --a 2 --b 3
+uv run taskonaut run-flow --flow echo_add --mode create --text hello --a 2 --b 3
+```
+
+Create + run a registered graph directly:
+
+```bash
+uv run taskonaut run-graph --flow add_echo --text hello --a 2 --b 3 --max-steps 12
 ```
 
 Fetch task:

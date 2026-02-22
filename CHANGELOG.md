@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-02-22
+
+- Integrate deterministic LangGraph flow execution (no LLM) with registered flows `echo_add` and `add_echo`.
+- Add graph-aware task fields: `current_node`, `next_node`, and `graph_state_summary`.
+- Persist per-step graph snapshots in Postgres via `graph_state_snapshots`.
+- Add Alembic migration for graph snapshot/state tracking schema.
+- Add CLI `run-graph --flow <name>` and add `--flow` support to `run-flow`.
+- Extend `/tasks/{id}` payload to expose graph execution state.
+- Add tests for graph flow registry/execution and CLI/API updates.
+
 ## 0.3.0 - 2026-02-21
 
 - Add tenacity-based retries with exponential backoff for tool execution.

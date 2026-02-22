@@ -17,6 +17,7 @@ class TaskCreateRequest(StrictBaseModel):
     text: str = Field(default="hello")
     a: int = Field(default=1)
     b: int = Field(default=2)
+    flow_name: str = Field(default="echo_add")
 
 
 class RunTaskRequest(StrictBaseModel):
@@ -65,6 +66,9 @@ class TaskResponse(StrictBaseModel):
     status: TaskStatus
     flow_name: str
     current_step: int
+    current_node: str | None
+    next_node: str | None
+    graph_state_summary: dict[str, Any]
     input_payload: dict[str, Any]
     output_payload: dict[str, Any] | None
     created_at: datetime

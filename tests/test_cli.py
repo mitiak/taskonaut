@@ -5,6 +5,7 @@ from taskrunner.cli import (
     build_parser,
     get_tasks_command,
     run_app_command,
+    run_graph_command,
     run_task_command,
 )
 
@@ -48,3 +49,12 @@ def test_parser_supports_api_base_url_option() -> None:
     args = parser.parse_args(["--api-base-url", "http://127.0.0.1:9000", "get-tasks"])
 
     assert args.api_base_url == "http://127.0.0.1:9000"
+
+
+def test_parser_supports_run_graph_subcommand() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["run-graph", "--flow", "echo_add", "--max-steps", "7"])
+
+    assert args.func is run_graph_command
+    assert args.flow == "echo_add"
+    assert args.max_steps == 7

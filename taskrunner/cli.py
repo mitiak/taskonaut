@@ -55,13 +55,19 @@ def _api_request(
 def run_flow_command(args: argparse.Namespace) -> int:
     logger.info(
         "cli.run_flow.started",
-        extra={"text": args.text, "a": args.a, "b": args.b, "api_base_url": args.api_base_url},
+        extra={
+            "text": args.text,
+            "a": args.a,
+            "b": args.b,
+            "flow_name": args.flow,
+            "api_base_url": args.api_base_url,
+        },
     )
     create_response = _api_request(
         args,
         "POST",
         "/tasks",
-        json_body={"text": args.text, "a": args.a, "b": args.b},
+        json_body={"text": args.text, "a": args.a, "b": args.b, "flow_name": args.flow},
     )
     if create_response is None:
         return 1
@@ -218,6 +224,53 @@ def run_app_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_graph_command(args: argparse.Namespace) -> int:
+    logger.info(
+        "cli.run_graph.started",
+        extra={
+            "flow_name": args.flow,
+            "text": args.text,
+            "a": args.a,
+            "b": args.b,
+            "max_steps": args.max_steps,
+            "api_base_url": args.api_base_url,
+        },
+    )
+    create_response = _api_request(
+        args,
+        "POST",
+        "/tasks",
+        json_body={"text": args.text, "a": args.a, "b": args.b, "flow_name": args.flow},
+    )
+    if create_response is None:
+        return 1
+    if create_response.is_error:
+        print(_format_api_error(create_response))
+        return 1
+
+    try:
+        task_payload = create_response.json()
+        task_id = task_payload["id"]
+    except (ValueError, KeyError, TypeError):
+        print("Unexpected create-task response payload")
+        return 1
+
+    execute_response = _api_request(
+        args,
+        "POST",
+        f"/tasks/{task_id}/run",
+        json_body={"max_steps": args.max_steps},
+    )
+    if execute_response is None:
+        return 1
+    if execute_response.is_error:
+        print(_format_api_error(execute_response))
+        return 1
+    logger.info("cli.run_graph.succeeded", extra={"task_id": task_id, "flow_name": args.flow})
+    _print_json_response(execute_response)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taskonaut")
     parser.add_argument(
@@ -243,6 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_flow.add_argument("--text", default="hello", help="Input for echo tool")
     run_flow.add_argument("--a", type=int, default=1, help="First addend")
     run_flow.add_argument("--b", type=int, default=2, help="Second addend")
+    run_flow.add_argument("--flow", default="echo_add", help="Deterministic flow name")
     run_flow.add_argument(
         "--mode",
         choices=("create", "advance", "run"),
@@ -283,6 +337,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of advance transitions",
     )
     run_task.set_defaults(func=run_task_command)
+
+    run_graph = subparsers.add_parser(
+        "run-graph",
+        help="Create and run a deterministic LangGraph flow by name",
+    )
+    run_graph.add_argument("--flow", required=True, help="Registered flow name")
+    run_graph.add_argument("--text", default="hello", help="Input text")
+    run_graph.add_argument("--a", type=int, default=1, help="First addend")
+    run_graph.add_argument("--b", type=int, default=2, help="Second addend")
+    run_graph.add_argument("--max-steps", type=int, default=12, help="Max transitions")
+    run_graph.set_defaults(func=run_graph_command)
 
     run_app = subparsers.add_parser("run-app", help="Run the main FastAPI app")
     run_app.add_argument("--host", default="127.0.0.1", help="Host interface to bind")

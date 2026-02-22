@@ -61,22 +61,31 @@ def test_run_tool_with_retry_returns_retry_count_after_transient_failure(
     step_id = uuid4()
     state = {"calls": 0}
 
-    def fake_invoke(tool_name: str, request_payload: dict[str, object]) -> dict[str, object]:
+    def fake_execute_graph_node(
+        *,
+        flow_name: str,
+        node_name: str,
+        graph_state: dict[str, object],
+    ) -> tuple[dict[str, object], dict[str, object]]:
         state["calls"] += 1
         if state["calls"] < 2:
             raise RuntimeError("temporary failure")
-        return {"ok": True, "tool": tool_name, "payload": request_payload}
+        return {"ok": True, "tool": node_name, "flow": flow_name}, {**graph_state, "ok": True}
 
-    monkeypatch.setattr(service, "_invoke_tool", fake_invoke)
+    monkeypatch.setattr("taskrunner.service.execute_graph_node", fake_execute_graph_node)
 
-    result, last_error, retry_count, started_at, finished_at = service._run_tool_with_retry(
-        task_id=task_id,
-        step_id=step_id,
-        tool_name="echo",
-        request_payload={"text": "hello"},
+    result, graph_state, last_error, retry_count, started_at, finished_at = (
+        service._run_tool_with_retry(
+            task_id=task_id,
+            step_id=step_id,
+            flow_name="echo_add",
+            node_name="echo",
+            graph_state={"text": "hello"},
+        )
     )
 
-    assert result == {"ok": True, "tool": "echo", "payload": {"text": "hello"}}
+    assert result == {"ok": True, "tool": "echo", "flow": "echo_add"}
+    assert graph_state == {"text": "hello", "ok": True}
     assert last_error is None
     assert retry_count == 1
     assert isinstance(started_at, datetime)
