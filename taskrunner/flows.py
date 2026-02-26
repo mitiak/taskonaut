@@ -5,17 +5,24 @@ from typing import Any, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
 
-from taskrunner.policy import get_policy_limits
 from taskrunner.schemas import TaskCreateRequest
 from taskrunner.tool_registry import execute_tool
 
 
 class GraphExecutionState(TypedDict, total=False):
-    text: str
-    a: int
-    b: int
-    echo_result: dict[str, Any]
-    add_result: dict[str, Any]
+    raw_logs: list[str]
+    session_id: str
+    actor_id: str
+    actor_role: str
+    log_summary: dict[str, Any]
+    threat_indicators: dict[str, Any]
+    mitre_tactics: list[dict[str, Any]]
+    rag_context: list[dict[str, Any]]
+    risk_score: float
+    incident_report: dict[str, Any]
+    log_summarizer_result: dict[str, Any]
+    threat_classifier_result: dict[str, Any]
+    incident_reporter_result: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -37,24 +44,53 @@ class FlowDefinition:
         return self.node_sequence[idx + 1]
 
 
-def _echo_node(state: GraphExecutionState) -> dict[str, Any]:
-    limits = get_policy_limits()
-    output = execute_tool("echo", {"text": state["text"]}, timeout_secs=limits.tool_timeout_secs)
-    return {"echo_result": output}
+def _summarize_node(state: GraphExecutionState) -> dict[str, Any]:
+    payload = {
+        "raw_logs": state.get("raw_logs", []),
+        "context": {
+            "actor_id": state.get("actor_id", ""),
+            "actor_role": state.get("actor_role", ""),
+        },
+        "session_id": state.get("session_id", ""),
+    }
+    output = execute_tool("log_summarizer", payload, timeout_secs=120.0)
+    return {"log_summarizer_result": output}
 
 
-def _add_node(state: GraphExecutionState) -> dict[str, Any]:
-    limits = get_policy_limits()
-    output = execute_tool(
-        "add",
-        {"a": state["a"], "b": state["b"]},
-        timeout_secs=limits.tool_timeout_secs,
-    )
-    return {"add_result": output}
+def _classify_node(state: GraphExecutionState) -> dict[str, Any]:
+    summary_result = state.get("log_summarizer_result") or {}
+    payload = {
+        "raw_logs": state.get("raw_logs", []),
+        "context": {
+            "actor_id": state.get("actor_id", ""),
+            "actor_role": state.get("actor_role", ""),
+            "log_summary": summary_result.get("result", {}),
+        },
+        "session_id": state.get("session_id", ""),
+    }
+    output = execute_tool("threat_classifier", payload, timeout_secs=120.0)
+    return {"threat_classifier_result": output}
+
+
+def _report_node(state: GraphExecutionState) -> dict[str, Any]:
+    summary_result = state.get("log_summarizer_result") or {}
+    classify_result = state.get("threat_classifier_result") or {}
+    payload = {
+        "raw_logs": state.get("raw_logs", []),
+        "context": {
+            "actor_id": state.get("actor_id", ""),
+            "actor_role": state.get("actor_role", ""),
+            "log_summary": summary_result.get("result", {}),
+            "classification": classify_result.get("result", {}),
+        },
+        "session_id": state.get("session_id", ""),
+    }
+    output = execute_tool("incident_reporter", payload, timeout_secs=120.0)
+    return {"incident_reporter_result": output}
 
 
 def _build_linear_graph(node_handlers: dict[str, Any], node_sequence: tuple[str, ...]) -> Any:
-    builder = StateGraph(GraphExecutionState)
+    builder: StateGraph = StateGraph(GraphExecutionState)
     for node_name, node_handler in node_handlers.items():
         builder.add_node(node_name, node_handler)
     if node_sequence:
@@ -66,24 +102,15 @@ def _build_linear_graph(node_handlers: dict[str, Any], node_sequence: tuple[str,
 
 
 _FLOW_NODE_HANDLERS: dict[str, dict[str, Any]] = {
-    "echo_add": {
-        "echo": _echo_node,
-        "add": _add_node,
-    },
-    "demo": {
-        "echo": _echo_node,
-        "add": _add_node,
-    },
-    "add_echo": {
-        "add": _add_node,
-        "echo": _echo_node,
+    "soc_pipeline": {
+        "log_summarizer": _summarize_node,
+        "threat_classifier": _classify_node,
+        "incident_reporter": _report_node,
     },
 }
 
 _FLOW_NODE_SEQUENCES: dict[str, tuple[str, ...]] = {
-    "echo_add": ("echo", "add"),
-    "demo": ("echo", "add"),
-    "add_echo": ("add", "echo"),
+    "soc_pipeline": ("log_summarizer", "threat_classifier", "incident_reporter"),
 }
 
 FLOW_REGISTRY: dict[str, FlowDefinition] = {
@@ -110,15 +137,36 @@ def get_flow_definition(flow_name: str) -> FlowDefinition:
 
 
 def build_initial_graph_state(request: TaskCreateRequest) -> GraphExecutionState:
-    return {"text": request.text, "a": request.a, "b": request.b}
+    state: GraphExecutionState = {}
+    if request.raw_logs is not None:
+        state["raw_logs"] = request.raw_logs
+    if request.session_id is not None:
+        state["session_id"] = request.session_id
+    if request.actor_id is not None:
+        state["actor_id"] = request.actor_id
+    if request.actor_role is not None:
+        state["actor_role"] = request.actor_role
+    return state
 
 
 def build_step_input_payload(request: TaskCreateRequest, node_name: str) -> dict[str, Any]:
-    if node_name == "echo":
-        return {"text": request.text}
-    if node_name == "add":
-        return {"a": request.a, "b": request.b}
+    if node_name in ("log_summarizer", "threat_classifier", "incident_reporter"):
+        return {
+            "raw_logs": request.raw_logs or [],
+            "session_id": request.session_id or "",
+            "context": {
+                "actor_id": request.actor_id or "",
+                "actor_role": request.actor_role or "",
+            },
+        }
     raise ValueError(f"Unsupported node '{node_name}'")
+
+
+_SOC_RESULT_FIELDS: dict[str, str] = {
+    "log_summarizer": "log_summarizer_result",
+    "threat_classifier": "threat_classifier_result",
+    "incident_reporter": "incident_reporter_result",
+}
 
 
 def execute_graph_node(
@@ -135,8 +183,7 @@ def execute_graph_node(
         raise ValueError(f"Flow node '{node_name}' returned non-dict updates")
     merged_state = cast(GraphExecutionState, {**state_input, **updates})
 
-    if node_name == "echo":
-        return merged_state["echo_result"], dict(merged_state)
-    if node_name == "add":
-        return merged_state["add_result"], dict(merged_state)
+    if node_name in _SOC_RESULT_FIELDS:
+        result_field = _SOC_RESULT_FIELDS[node_name]
+        return merged_state.get(result_field, {}), dict(merged_state)
     raise ValueError(f"Unsupported node '{node_name}'")

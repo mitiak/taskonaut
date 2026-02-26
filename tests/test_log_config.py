@@ -15,7 +15,7 @@ def test_json_formatter_includes_core_and_extra_fields() -> None:
             "msg": "event happened",
             "args": (),
             "task_id": "abc-123",
-            "step": "echo",
+            "step": "summarize",
         }
     )
 
@@ -26,7 +26,7 @@ def test_json_formatter_includes_core_and_extra_fields() -> None:
     assert payload["logger"] == "taskrunner.test"
     assert payload["message"] == "event happened"
     assert payload["task_id"] == "abc-123"
-    assert payload["step"] == "echo"
+    assert payload["step"] == "summarize"
     assert isinstance(payload["timestamp"], str)
 
 

@@ -183,11 +183,10 @@ class TaskRunnerService:
             logger.info(
                 "task.create.started",
                 extra={
-                    "text": request.text,
-                    "a": request.a,
-                    "b": request.b,
                     "flow_name": flow.name,
                     "trace_id": trace_id,
+                    "session_id": request.session_id,
+                    "actor_id": request.actor_id,
                 },
             )
             task = Task(
@@ -822,11 +821,15 @@ class TaskRunnerService:
         graph_state: dict[str, Any],
     ) -> dict[str, Any]:
         flow = get_flow_definition(flow_name)
-        state_field_by_node = {"echo": "echo_result", "add": "add_result"}
+        state_field_by_node = {
+            "summarize": "summarize_result",
+            "classify": "classify_result",
+            "report": "report_result",
+        }
         completed_nodes = [
             node_name
             for node_name in flow.node_sequence
-            if graph_state.get(state_field_by_node[node_name]) is not None
+            if graph_state.get(state_field_by_node.get(node_name, node_name)) is not None
         ]
         return {
             "flow": flow_name,

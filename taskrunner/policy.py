@@ -20,7 +20,7 @@ class PolicyViolationError(Exception):
 
 def get_policy_limits() -> PolicyLimits:
     return PolicyLimits(
-        max_input_bytes=int(os.getenv("TASKRUNNER_MAX_INPUT_BYTES", "65536")),
+        max_input_bytes=int(os.getenv("TASKRUNNER_MAX_INPUT_BYTES", "1048576")),
         max_steps=int(os.getenv("TASKRUNNER_MAX_STEPS", "64")),
         tool_timeout_secs=float(os.getenv("TASKRUNNER_TOOL_TIMEOUT_SECS", "2.0")),
     )

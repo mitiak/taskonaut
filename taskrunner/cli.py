@@ -74,9 +74,6 @@ def run_flow_command(args: argparse.Namespace) -> int:
     logger.info(
         "cli.run_flow.started",
         extra={
-            "text": args.text,
-            "a": args.a,
-            "b": args.b,
             "flow_name": args.flow,
             "api_base_url": args.api_base_url,
         },
@@ -85,7 +82,7 @@ def run_flow_command(args: argparse.Namespace) -> int:
         args,
         "POST",
         "/tasks",
-        json_body={"text": args.text, "a": args.a, "b": args.b, "flow_name": args.flow},
+        json_body={"flow_name": args.flow},
     )
     if create_response is None:
         return 1
@@ -309,9 +306,6 @@ def run_graph_command(args: argparse.Namespace) -> int:
         "cli.run_graph.started",
         extra={
             "flow_name": args.flow,
-            "text": args.text,
-            "a": args.a,
-            "b": args.b,
             "max_steps": args.max_steps,
             "api_base_url": args.api_base_url,
         },
@@ -320,7 +314,7 @@ def run_graph_command(args: argparse.Namespace) -> int:
         args,
         "POST",
         "/tasks",
-        json_body={"text": args.text, "a": args.a, "b": args.b, "flow_name": args.flow},
+        json_body={"flow_name": args.flow},
     )
     if create_response is None:
         return 1
@@ -409,10 +403,7 @@ def build_parser() -> argparse.ArgumentParser:
         "run-flow",
         help="Create task and execute using create/advance/run mode",
     )
-    run_flow.add_argument("--text", default="hello", help="Input for echo tool")
-    run_flow.add_argument("--a", type=int, default=1, help="First addend")
-    run_flow.add_argument("--b", type=int, default=2, help="Second addend")
-    run_flow.add_argument("--flow", default="echo_add", help="Deterministic flow name")
+    run_flow.add_argument("--flow", default="soc_pipeline", help="Registered flow name")
     run_flow.add_argument(
         "--mode",
         choices=("create", "advance", "run"),
@@ -459,9 +450,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create and run a deterministic LangGraph flow by name",
     )
     run_graph.add_argument("--flow", required=True, help="Registered flow name")
-    run_graph.add_argument("--text", default="hello", help="Input text")
-    run_graph.add_argument("--a", type=int, default=1, help="First addend")
-    run_graph.add_argument("--b", type=int, default=2, help="Second addend")
     run_graph.add_argument("--max-steps", type=int, default=12, help="Max transitions")
     run_graph.set_defaults(func=run_graph_command)
 

@@ -58,7 +58,7 @@ def dump_metrics_snapshot(db: Session) -> str:
     for status, tool_name, count in tool_call_counts:
         tool_call_counter.labels(status=status.value, tool_name=tool_name).inc(count)
     for status in ToolCallStatus:
-        for tool_name in ("echo", "add"):
+        for tool_name in ("log_summarizer", "threat_classifier", "incident_reporter"):
             tool_call_counter.labels(status=status.value, tool_name=tool_name)
             tool_duration_histogram.labels(status=status.value, tool_name=tool_name)
 

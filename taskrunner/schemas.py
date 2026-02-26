@@ -13,11 +13,13 @@ class StrictBaseModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class TaskCreateRequest(StrictBaseModel):
-    text: str = Field(default="hello")
-    a: int = Field(default=1)
-    b: int = Field(default=2)
-    flow_name: str = Field(default="echo_add")
+class TaskCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    flow_name: str = Field(default="soc_pipeline")
+    raw_logs: list[str] | None = Field(default=None)
+    session_id: str | None = Field(default=None)
+    actor_id: str | None = Field(default=None)
+    actor_role: str | None = Field(default=None)
 
 
 class RunTaskRequest(StrictBaseModel):

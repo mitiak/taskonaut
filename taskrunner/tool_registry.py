@@ -9,7 +9,13 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from taskrunner.policy import PolicyViolationError
-from taskrunner.tools import AddInput, AddOutput, EchoInput, EchoOutput, add, echo
+from taskrunner.tools import (
+    SocAgentInput,
+    SocAgentOutput,
+    incident_reporter_call,
+    log_summarizer_call,
+    threat_classifier_call,
+)
 
 
 @dataclass(frozen=True)
@@ -21,8 +27,24 @@ class ToolSpec:
 
 
 _TOOL_REGISTRY: dict[str, ToolSpec] = {
-    "echo": ToolSpec(name="echo", input_model=EchoInput, output_model=EchoOutput, executor=echo),
-    "add": ToolSpec(name="add", input_model=AddInput, output_model=AddOutput, executor=add),
+    "log_summarizer": ToolSpec(
+        name="log_summarizer",
+        input_model=SocAgentInput,
+        output_model=SocAgentOutput,
+        executor=log_summarizer_call,
+    ),
+    "threat_classifier": ToolSpec(
+        name="threat_classifier",
+        input_model=SocAgentInput,
+        output_model=SocAgentOutput,
+        executor=threat_classifier_call,
+    ),
+    "incident_reporter": ToolSpec(
+        name="incident_reporter",
+        input_model=SocAgentInput,
+        output_model=SocAgentOutput,
+        executor=incident_reporter_call,
+    ),
 }
 
 
@@ -44,7 +66,7 @@ def get_tool_spec(tool_name: str) -> ToolSpec:
 def validate_tool_input(tool_name: str, payload: dict[str, Any]) -> BaseModel:
     spec = get_tool_spec(tool_name)
     try:
-        return spec.input_model.model_validate(payload, strict=True)
+        return spec.input_model.model_validate(payload)
     except ValidationError as exc:
         raise PolicyViolationError(
             code="INVALID_TOOL_INPUT",

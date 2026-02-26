@@ -48,9 +48,9 @@ def test_build_tool_call_idempotency_key_uses_task_step_and_tool() -> None:
     task_id = uuid4()
     step_id = uuid4()
 
-    key = service._build_tool_call_idempotency_key(task_id, step_id, "echo")
+    key = service._build_tool_call_idempotency_key(task_id, step_id, "log_summarizer")
 
-    assert key == f"{task_id}:{step_id}:echo"
+    assert key == f"{task_id}:{step_id}:log_summarizer"
 
 
 def test_run_tool_with_retry_returns_retry_count_after_transient_failure(
@@ -78,14 +78,14 @@ def test_run_tool_with_retry_returns_retry_count_after_transient_failure(
         service._run_tool_with_retry(
             task_id=task_id,
             step_id=step_id,
-            flow_name="echo_add",
-            node_name="echo",
-            graph_state={"text": "hello"},
+            flow_name="soc_pipeline",
+            node_name="summarize",
+            graph_state={"raw_logs": ["log1"], "session_id": "s1"},
         )
     )
 
-    assert result == {"ok": True, "tool": "echo", "flow": "echo_add"}
-    assert graph_state == {"text": "hello", "ok": True}
+    assert result == {"ok": True, "tool": "summarize", "flow": "soc_pipeline"}
+    assert graph_state == {"raw_logs": ["log1"], "session_id": "s1", "ok": True}
     assert last_error is None
     assert retry_count == 1
     assert isinstance(started_at, datetime)

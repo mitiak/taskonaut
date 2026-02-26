@@ -26,11 +26,16 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Task Runner", version="0.1.0")
 
 
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.post("/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(request: TaskCreateRequest, db: Session = Depends(get_db)) -> TaskResponse:
     logger.info(
         "create_task.started",
-        extra={"text": request.text, "a": request.a, "b": request.b},
+        extra={"flow_name": request.flow_name, "session_id": request.session_id},
     )
     service = TaskRunnerService(db)
     try:

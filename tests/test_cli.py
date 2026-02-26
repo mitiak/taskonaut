@@ -57,21 +57,21 @@ def test_parser_supports_api_base_url_option() -> None:
 
 def test_parser_supports_run_graph_subcommand() -> None:
     parser = build_parser()
-    args = parser.parse_args(["run-graph", "--flow", "echo_add", "--max-steps", "7"])
+    args = parser.parse_args(["run-graph", "--flow", "soc_pipeline", "--max-steps", "7"])
 
     assert args.func is run_graph_command
-    assert args.flow == "echo_add"
+    assert args.flow == "soc_pipeline"
     assert args.max_steps == 7
 
 
 def test_parser_supports_local_run_subcommand() -> None:
     parser = build_parser()
     args = parser.parse_args(
-        ["run", "--flow", "demo", "--input", '{"text":"hi","a":2,"b":3}', "--verbose"]
+        ["run", "--flow", "soc_pipeline", "--input", '{"raw_logs":["log1"],"session_id":"s1"}', "--verbose"]
     )
 
     assert args.func is run_local_command
-    assert args.flow == "demo"
+    assert args.flow == "soc_pipeline"
     assert args.verbose is True
 
 
@@ -91,6 +91,6 @@ def test_parser_supports_metrics_dump_subcommand() -> None:
 
 def test_parser_supports_validate_subcommand() -> None:
     parser = build_parser()
-    args = parser.parse_args(["validate", "--flow", "demo", "--input", '{"text":"x","a":1,"b":2}'])
+    args = parser.parse_args(["validate", "--flow", "soc_pipeline", "--input", '{"raw_logs":["log1"]}'])
 
     assert args.func is validate_local_command

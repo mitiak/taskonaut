@@ -51,7 +51,7 @@ class Task(Base):
     flow_name: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
-        default="echo_add",
+        default="soc_pipeline",
     )
     current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     current_node: Mapped[str | None] = mapped_column(String(100), nullable=True)

@@ -17,12 +17,12 @@ def _task(task_id: UUID, status: TaskStatus) -> Task:
         id=task_id,
         trace_id="trace-123",
         status=status,
-        flow_name="echo_add",
+        flow_name="soc_pipeline",
         current_step=0,
-        current_node="echo",
-        next_node="add",
-        graph_state_summary={"flow": "echo_add", "total_nodes": 2, "completed_nodes": ["echo"]},
-        input_payload={"text": "hello", "a": 2, "b": 3},
+        current_node="summarize",
+        next_node="classify",
+        graph_state_summary={"flow": "soc_pipeline", "total_nodes": 3, "completed_nodes": ["summarize"]},
+        input_payload={"flow_name": "soc_pipeline", "raw_logs": ["log1"], "session_id": "s1", "actor_id": "a1", "actor_role": "analyst"},
         output_payload=None,
         created_at=now,
         updated_at=now,
@@ -43,15 +43,15 @@ def test_create_task_returns_201(monkeypatch) -> None:
 
     try:
         client = TestClient(app)
-        response = client.post("/tasks", json={"text": "hello", "a": 2, "b": 3})
+        response = client.post("/tasks", json={"flow_name": "soc_pipeline", "raw_logs": ["log1"], "session_id": "sess-1", "actor_id": "analyst-001", "actor_role": "analyst"})
     finally:
         app.dependency_overrides.clear()
 
     assert response.status_code == 201
     assert response.json()["id"] == str(task_id)
     assert response.json()["status"] == TaskStatus.PLANNED.value
-    assert response.json()["current_node"] == "echo"
-    assert response.json()["next_node"] == "add"
+    assert response.json()["current_node"] == "summarize"
+    assert response.json()["next_node"] == "classify"
 
 
 def test_advance_task_returns_200(monkeypatch) -> None:
