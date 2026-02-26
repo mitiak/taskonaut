@@ -12,6 +12,11 @@ from logster.format import format_record  # type: ignore[import-untyped]
 _BASE_LOG_RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__.keys())
 
 
+class _HealthFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "GET /health" not in record.getMessage()
+
+
 def _json_default(value: Any) -> str:
     return str(value)
 
@@ -107,3 +112,4 @@ def configure_logging(
     level_name: str = cast(str, level or os.getenv("LOG_LEVEL", "INFO") or "INFO")
     logger.setLevel(level_name)
     logger.propagate = False
+    logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
